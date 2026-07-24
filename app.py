@@ -6,18 +6,19 @@ from datetime import datetime, timedelta
 from garminconnect import Garmin, GarminConnectAuthenticationError
 import os
 
-# 1. CONFIGURAZIONE PAGINA
-st.set_page_config(page_title="Luca Tassarotti Coach", page_icon="👟", layout="centered", initial_sidebar_state="collapsed")
+# 1. CONFIGURAZIONE PAGINA E FIX VISIVI
+st.set_page_config(page_title="MTD Training Crew", page_icon="👟", layout="centered", initial_sidebar_state="expanded")
 
 # ---------------------------------------------------------------------------
-# PALETTE (a tema corsa/pista) — cambia solo qui per ridefinire i colori
+# PALETTE (a tema corsa/pista)
 # ---------------------------------------------------------------------------
-COLORE_ASFALTO = "#1e293b"    # testo principale, sfondo scuro
-COLORE_PISTA = "#ea580c"      # dati Garmin / svolto
+COLORE_ASFALTO = "#1e293b"    
+COLORE_PISTA = "#ea580c"      
 COLORE_PISTA_CHIARO = "#fed7aa"
-COLORE_CIELO = "#0ea5e9"      # piano del coach / pianificato
-COLORE_TRAGUARDO = "#16a34a"  # SOLO per badge/traguardi raggiunti
-COLORE_NEBBIA = "#f1f5f9"     # sfondo neutro / giorni senza attività
+COLORE_CIELO = "#0ea5e9"      
+COLORE_TRAGUARDO = "#16a34a"  
+COLORE_NEBBIA = "#f1f5f9"     
+COLORE_SIDEBAR = "#0f172a"
 
 st.markdown(f"""
     <style>
@@ -25,6 +26,11 @@ st.markdown(f"""
 
     html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
     .block-container {{ padding: 1.5rem 1rem !important; max-width: 100%; overflow-x: hidden; }}
+    
+    [data-testid="stSidebar"] {{ background-color: {COLORE_SIDEBAR}; }}
+    [data-testid="stSidebar"] * {{ color: #f8fafc !important; }}
+    [data-testid="stSidebar"] hr {{ border-color: #334155; margin: 20px 0; }}
+    
     .home-logo {{ text-align: center; font-size: 45px; margin-bottom: -15px; }}
     .main-title {{ text-align: center; font-family: 'Oswald', sans-serif; font-weight: 700; letter-spacing: 1px;
                    color: {COLORE_ASFALTO}; font-size: 1.9rem; margin-bottom: 5px; line-height: 1.2; text-transform: uppercase;}}
@@ -39,10 +45,8 @@ st.markdown(f"""
 
     .stat-number {{ font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 1.9rem; color: {COLORE_ASFALTO}; line-height: 1;}}
     .stat-label {{ font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-top: 2px;}}
-
     .badge-pill {{ display: inline-block; background-color: {COLORE_TRAGUARDO}; color: white; padding: 4px 12px;
                    border-radius: 999px; font-size: 0.8rem; font-weight: 600; margin: 3px 5px 3px 0;}}
-
     .progress-caption {{ font-size: 0.8rem; color: #78350f; margin-top: 8px; margin-bottom: 2px; }}
     .progress-track {{ background-color: {COLORE_NEBBIA}; border-radius: 999px; height: 10px; overflow: hidden; }}
     .progress-fill {{ height: 100%; border-radius: 999px; background-color: {COLORE_PISTA}; }}
@@ -64,7 +68,6 @@ st.markdown(f"""
 # 2. CREDENZIALI
 GARMIN_EMAIL = "scocla@hotmail.it"
 GARMIN_PWD = "Ciccio1994"
-
 EXCEL_FILE_PATH = "storico_salvato.xlsx"
 
 FRASI_MOTIVAZIONALI = [
@@ -81,35 +84,58 @@ MESI_COMPLETI = {1: 'gennaio', 2: 'febbraio', 3: 'marzo', 4: 'aprile', 5: 'maggi
 MESI_IT = {1: 'gen', 2: 'feb', 3: 'mar', 4: 'apr', 5: 'mag', 6: 'giu', 7: 'lug', 8: 'ago',
            9: 'set', 10: 'ott', 11: 'nov', 12: 'dic'}
 GIORNI_SETTIMANA_IT = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
-
 REGEX_KM = re.compile(r'(\d+(?:[.,]\d+)?)\s*km', re.IGNORECASE)
 
-
 # ---------------------------------------------------------------------------
-# GARMIN
+# GARMIN - FUNZIONI
 # ---------------------------------------------------------------------------
 
-@st.cache_resource(ttl=60 * 30)  # ricrea la sessione al massimo ogni 30 minuti
+@st.cache_resource(ttl=60 * 30) 
 def get_garmin_client(email: str, password: str):
     client = Garmin(email, password)
     client.login()
     return client
 
-
 @st.cache_data(ttl=60 * 10)
 def sincronizza_garmin_periodo(_client, email_key: str, giorni: int = 35):
-    """Recupera le attività degli ultimi N giorni (default 35, copre mese + streak + settimana).
-    _client non viene hashato da streamlit (prefisso _)."""
     fine = datetime.today().date()
     inizio = fine - timedelta(days=giorni - 1)
     try:
         attivita = _client.get_activities_by_date(inizio.isoformat(), fine.isoformat())
     except AttributeError:
-        # fallback per versioni di garminconnect senza questo metodo
         attivita = _client.get_activities(0, 60)
         attivita = [a for a in attivita if inizio.isoformat() <= a.get('startTimeLocal', '')[:10] <= fine.isoformat()]
     return attivita
 
+def push_allenamenti_su_garmin(client, allenamenti_futuri):
+    successi = 0
+    for data_iso, desc in allenamenti_futuri.items():
+        if not desc or str(desc).strip().lower() == "riposo":
+            continue
+        try:
+            workout = {
+                "workoutName": desc[:15] + "...",
+                "description": desc,
+                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                "workoutSegments": [{
+                    "segmentOrder": 1,
+                    "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                    "workoutSteps": [{
+                        "type": "ExecutableStepDTO",
+                        "stepId": None,
+                        "stepOrder": 1,
+                        "durationType": {"stepDurationTypeId": 1, "stepDurationTypeKey": "lap.button"},
+                        "targetType": {"stepTargetTypeId": 1, "stepTargetTypeKey": "no_target"},
+                    }]
+                }]
+            }
+            workout_id = client.add_workout(workout).get("workoutId")
+            if workout_id:
+                client.schedule_workout(workout_id, data_iso)
+                successi += 1
+        except Exception as e:
+            pass 
+    return successi
 
 def formatta_passo(velocita_ms: float) -> str:
     if not velocita_ms or velocita_ms <= 0:
@@ -119,23 +145,18 @@ def formatta_passo(velocita_ms: float) -> str:
     secondi = int(secondi_per_km % 60)
     return f"{minuti}'{secondi:02d}\""
 
-
 def raggruppa_per_giorno(attivita: list) -> dict:
-    """Ritorna {data_iso: {'km': totale, 'attivita': [...]}}"""
     per_giorno = {}
     for act in attivita:
         data_iso = act.get('startTimeLocal', '')[:10]
-        if not data_iso:
-            continue
+        if not data_iso: continue
         km = act.get('distance', 0) / 1000
         per_giorno.setdefault(data_iso, {"km": 0.0, "attivita": []})
         per_giorno[data_iso]["km"] += km
         per_giorno[data_iso]["attivita"].append(act)
     return per_giorno
 
-
 def calcola_streak(attivita_per_giorno: dict, oggi: datetime) -> int:
-    """Conta i giorni consecutivi con almeno un'attività, partendo da oggi a ritroso."""
     streak = 0
     giorno = oggi.date()
     while True:
@@ -147,23 +168,19 @@ def calcola_streak(attivita_per_giorno: dict, oggi: datetime) -> int:
             break
     return streak
 
-
 def statistiche_mese(attivita: list, oggi: datetime) -> dict:
-    """Km totali, record distanza singola e miglior passo nel mese corrente."""
     km_totali, record_distanza, record_velocita = 0.0, 0.0, 0.0
     for act in attivita:
         data_iso = act.get('startTimeLocal', '')[:10]
-        if not data_iso or not data_iso.startswith(oggi.strftime("%Y-%m")):
-            continue
+        if not data_iso or not data_iso.startswith(oggi.strftime("%Y-%m")): continue
         km = act.get('distance', 0) / 1000
         km_totali += km
         record_distanza = max(record_distanza, km)
         record_velocita = max(record_velocita, act.get('averageSpeed', 0) or 0)
     return {"km_totali": km_totali, "record_distanza": record_distanza, "record_passo": formatta_passo(record_velocita)}
 
-
 # ---------------------------------------------------------------------------
-# EXCEL: PARSING PIU' ROBUSTO
+# EXCEL: PARSING PRECISO CON RICONOSCIMENTO MESE
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=60 * 5)
@@ -171,9 +188,7 @@ def carica_fogli_excel(path: str, mtime: float):
     xls = pd.ExcelFile(path)
     return {foglio: pd.read_excel(xls, sheet_name=foglio, header=None) for foglio in xls.sheet_names}
 
-
-def trova_riga_date(df: pd.DataFrame, mese_oggi: int) -> int:
-    """Sceglie la riga con più celle che sembrano date, invece che la prima trovata."""
+def trova_riga_date(df: pd.DataFrame, mese_target: int) -> int:
     migliore_idx, miglior_punteggio = -1, 0
     for r_idx in range(len(df)):
         punteggio = 0
@@ -182,8 +197,7 @@ def trova_riga_date(df: pd.DataFrame, mese_oggi: int) -> int:
                 punteggio += 1
                 continue
             val_str = str(val).lower()
-            if (f"-{MESI_IT[mese_oggi]}" in val_str or f"/{mese_oggi}/" in val_str
-                    or "lug" in val_str or "jul" in val_str):
+            if (f"-{MESI_IT.get(mese_target, '')}" in val_str or f"/{mese_target}/" in val_str or MESI_IT.get(mese_target, '') in val_str):
                 punteggio += 1
         if punteggio > miglior_punteggio:
             miglior_punteggio, migliore_idx = punteggio, r_idx
@@ -191,20 +205,26 @@ def trova_riga_date(df: pd.DataFrame, mese_oggi: int) -> int:
         return 3
     return migliore_idx
 
-
-def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int):
-    """Ritorna (righe_mese, allenamento_oggi, celle_non_riconosciute)."""
+def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int, nome_foglio: str):
     mese_data = []
     allenamento_oggi = None
     non_riconosciute = 0
+    pianificazione_futura = {}
 
-    riga_date_idx = trova_riga_date(df, mese_oggi)
+    # Riconosce il mese specifico del foglio Excel corrente
+    mese_foglio = mese_oggi
+    for num, nome in MESI_COMPLETI.items():
+        if nome in nome_foglio.lower():
+            mese_foglio = num
+            break
+
+    riga_date_idx = trova_riga_date(df, mese_foglio)
     if riga_date_idx == -1:
-        return mese_data, allenamento_oggi, non_riconosciute
+        return mese_data, allenamento_oggi, non_riconosciute, pianificazione_futura
 
     riga_workout_idx = riga_date_idx + 2 if (riga_date_idx + 2) < len(df) else riga_date_idx + 1
     if riga_workout_idx >= len(df):
-        return mese_data, allenamento_oggi, non_riconosciute
+        return mese_data, allenamento_oggi, non_riconosciute, pianificazione_futura
 
     row_dates = df.iloc[riga_date_idx].values
     row_workouts = df.iloc[riga_workout_idx].values
@@ -216,63 +236,64 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int):
         if pd.isna(d_raw):
             continue
 
-        d_str, is_oggi, riconosciuta = "", False, False
+        d_str, is_oggi, data_reale = "", False, None
 
         if isinstance(d_raw, datetime) or type(d_raw).__name__ == "Timestamp":
             d_str = f"{d_raw.day}-{MESI_IT.get(d_raw.month, '')}"
             is_oggi = (d_raw.day == giorno_oggi and d_raw.month == mese_oggi)
-            riconosciuta = True
+            data_reale = d_raw
         else:
             d_str = str(d_raw).strip()
             d_lower = d_str.lower()
-            ha_mese = ("lug" in d_lower or "jul" in d_lower or str(mese_oggi) in d_lower)
-            ha_giorno = any(ch.isdigit() for ch in d_lower)
-            riconosciuta = ha_mese and ha_giorno
-            is_oggi = (
-                (f"{giorno_oggi}-" in d_lower or f"{giorno_oggi} " in d_lower or d_lower.startswith(str(giorno_oggi)))
-                and ha_mese
-            )
+            
+            # Cerca il mese esatto di questa cella
+            mese_cella = mese_foglio
+            for num, sigla in MESI_IT.items():
+                if sigla in d_lower or f"/{num}/" in d_lower:
+                    mese_cella = num
+                    break
+                    
+            num_match = re.search(r'\d+', d_lower)
+            if num_match:
+                try:
+                    g = int(num_match.group())
+                    data_reale = datetime(datetime.today().year, mese_cella, g)
+                    is_oggi = (data_reale.date() == datetime.today().date())
+                except:
+                    pass
 
-        if not riconosciuta:
+        if not data_reale:
             non_riconosciute += 1
 
         if d_str and d_str != "nan":
-            mese_data.append({"Data": d_str.capitalize(), "Programma": w if w != "nan" else "Riposo"})
+            allenamento_desc = w if w != "nan" else "Riposo"
+            mese_data.append({"Data": d_str.capitalize(), "Programma": allenamento_desc})
+            
+            # REGOLE DI SINCRONIZZAZIONE GARMIN: RIGOROSAMENTE DA OGGI IN POI (>=)
+            if data_reale and data_reale.date() >= datetime.today().date() and data_reale.date() <= (datetime.today().date() + timedelta(days=14)):
+                pianificazione_futura[data_reale.strftime("%Y-%m-%d")] = allenamento_desc
 
         if is_oggi and w and w not in ("nan", ""):
             allenamento_oggi = w
 
-    mese_data.reverse()  # più recenti in alto, più vecchi in basso
-    return mese_data, allenamento_oggi, non_riconosciute
-
+    mese_data.reverse() 
+    return mese_data, allenamento_oggi, non_riconosciute, pianificazione_futura
 
 def estrai_km_pianificati(testo: str):
-    if not testo:
-        return None
+    if not testo: return None
     match = REGEX_KM.search(testo)
-    if match:
-        return float(match.group(1).replace(",", "."))
+    if match: return float(match.group(1).replace(",", "."))
     return None
 
-
-# ---------------------------------------------------------------------------
-# HEATMAP MENSILE (stile "contribution calendar")
-# ---------------------------------------------------------------------------
-
 def colore_heatmap(km: float) -> str:
-    if km <= 0:
-        return COLORE_NEBBIA
-    if km < 5:
-        return COLORE_PISTA_CHIARO
-    if km < 10:
-        return "#fb923c"
+    if km <= 0: return COLORE_NEBBIA
+    if km < 5: return COLORE_PISTA_CHIARO
+    if km < 10: return "#fb923c"
     return COLORE_PISTA
 
-
 def costruisci_heatmap_html(oggi: datetime, attivita_per_giorno: dict) -> str:
-    primo_weekday, giorni_nel_mese = calendar.monthrange(oggi.year, oggi.month)  # weekday: lunedì=0
+    primo_weekday, giorni_nel_mese = calendar.monthrange(oggi.year, oggi.month) 
     celle = ['<div class="heatmap-cell vuota"></div>' for _ in range(primo_weekday)]
-
     for giorno_num in range(1, giorni_nel_mese + 1):
         data = datetime(oggi.year, oggi.month, giorno_num)
         data_iso = data.strftime("%Y-%m-%d")
@@ -287,20 +308,12 @@ def costruisci_heatmap_html(oggi: datetime, attivita_per_giorno: dict) -> str:
             f'<div class="heatmap-cell{classe_oggi}" style="background-color:{colore};{bordo}" title="{titolo}">'
             f'<span class="hm-day">{giorno_num}</span>{km_html}</div>'
         )
-
     intestazioni = "".join(f'<div class="heatmap-weekday">{g}</div>' for g in GIORNI_SETTIMANA_IT)
-    return (
-        f'<div class="heatmap-wrapper">'
-        f'<div class="heatmap-weekdays">{intestazioni}</div>'
-        f'<div class="heatmap-grid">{"".join(celle)}</div>'
-        f'</div>'
-    )
-
+    return f'<div class="heatmap-wrapper"><div class="heatmap-weekdays">{intestazioni}</div><div class="heatmap-grid">{"".join(celle)}</div></div>'
 
 # ---------------------------------------------------------------------------
 # STATO / DATE
 # ---------------------------------------------------------------------------
-
 oggi = datetime.today()
 giorno_oggi = oggi.day
 mese_oggi = oggi.month
@@ -314,27 +327,23 @@ frase_del_giorno = FRASI_MOTIVAZIONALI[oggi.timetuple().tm_yday % len(FRASI_MOTI
 st.markdown(f"<div class='motivation-box'>{frase_del_giorno}</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# SIDEBAR
+# SIDEBAR E AZIONI MANUALI
 # ---------------------------------------------------------------------------
-
-st.sidebar.title("⚙️ Impostazioni")
-uploaded_file = st.sidebar.file_uploader("Aggiorna File Excel", type=["xlsx", "xls"])
+st.sidebar.title("⚙️ Gestione App")
+st.sidebar.markdown("### 1. Storico Database")
+uploaded_file = st.sidebar.file_uploader("Importa Database Vecchio o Nuovo", type=["xlsx", "xls"])
 if uploaded_file is not None:
     with open(EXCEL_FILE_PATH, "wb") as f:
         f.write(uploaded_file.getbuffer())
     st.cache_data.clear()
-    st.sidebar.success("File Excel aggiornato e salvato con successo!")
+    st.sidebar.success("Database aggiornato con successo!")
 
 file_da_leggere = EXCEL_FILE_PATH if os.path.exists(EXCEL_FILE_PATH) else None
-
-# ---------------------------------------------------------------------------
-# GARMIN: sincronizzazione (35 giorni: copre mese corrente, streak e settimana)
-# ---------------------------------------------------------------------------
-
 attivita_periodo = []
 attivita_per_giorno = {}
 garmin_client = None
 garmin_errore = None
+piani_futuri = {}
 
 if GARMIN_EMAIL and GARMIN_PWD:
     try:
@@ -349,28 +358,36 @@ if GARMIN_EMAIL and GARMIN_PWD:
 # ---------------------------------------------------------------------------
 # ELABORAZIONE DATI EXCEL
 # ---------------------------------------------------------------------------
-
 if file_da_leggere:
     try:
         mtime = os.path.getmtime(file_da_leggere)
         fogli_raw = carica_fogli_excel(file_da_leggere, mtime)
         fogli_mesi = list(fogli_raw.keys())
-
-        indice_default = next(
-            (i for i, nome in enumerate(fogli_mesi) if foglio_default_target in nome.lower()), 0
-        )
+        indice_default = next((i for i, nome in enumerate(fogli_mesi) if foglio_default_target in nome.lower()), 0)
 
         dati_completi = {}
         allenamento_oggi = "Riposo o nessun allenamento trovato."
         totale_non_riconosciute = 0
 
         for foglio, df in fogli_raw.items():
-            mese_data, trovato_oggi, non_ric = estrai_workout_del_mese(df, mese_oggi, giorno_oggi)
+            mese_data, trovato_oggi, non_ric, futuri = estrai_workout_del_mese(df, mese_oggi, giorno_oggi, foglio)
             if mese_data:
                 dati_completi[foglio] = pd.DataFrame(mese_data)
             if trovato_oggi:
                 allenamento_oggi = trovato_oggi
             totale_non_riconosciute += non_ric
+            piani_futuri.update(futuri)
+
+        # SEZIONE SIDEBAR: Sincronizzazione Piani Futuri (Solo DA OGGI in poi)
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 2. Sincronizzazione Calendario")
+        if garmin_client and piani_futuri:
+            if st.sidebar.button("Invia prossime 2 settimane al Garmin"):
+                with st.spinner("Invio allenamenti al calendario (Da Oggi in poi)..."):
+                    caricati = push_allenamenti_su_garmin(garmin_client, piani_futuri)
+                st.sidebar.success(f"{caricati} allenamenti caricati su Garmin Connect!")
+        elif not garmin_client:
+            st.sidebar.caption("Garmin disconnesso, sincronizzazione disabilitata.")
 
         # --- ALLENAMENTO PROGRAMMATO ---
         st.subheader(f"⚡ Oggi ({oggi.strftime('%d/%m/%Y')})")
@@ -381,19 +398,16 @@ if file_da_leggere:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- ALLENAMENTO SVOLTO (solo Garmin) ---
+        # --- ALLENAMENTO SVOLTO ---
         st.markdown("<div class='card-actual'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>🟠 Allenamento Svolto</div>", unsafe_allow_html=True)
 
         km_svolto_oggi = 0.0
 
         if garmin_errore == "auth":
-            st.error("❌ Credenziali Garmin non valide. Controlla email e password in secrets.toml.")
+            st.error("❌ Credenziali Garmin non valide. Controllale nel codice.")
         elif garmin_errore == "connessione":
-            st.markdown(
-                "<p class='workout-text'>⚠️ Garmin temporaneamente non raggiungibile.</p>",
-                unsafe_allow_html=True,
-            )
+            st.markdown("<p class='workout-text'>⚠️ Garmin temporaneamente non raggiungibile.</p>", unsafe_allow_html=True)
         else:
             dati_oggi = attivita_per_giorno.get(oggi_iso)
             if dati_oggi and dati_oggi["attivita"]:
@@ -404,16 +418,9 @@ if file_da_leggere:
                     passo_str = formatta_passo(act.get("averageSpeed", 0))
                     if i > 0:
                         st.markdown("<hr class='garmin-divider'>", unsafe_allow_html=True)
-                    st.markdown(
-                        f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>"
-                        f"📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>",
-                        unsafe_allow_html=True,
-                    )
+                    st.markdown(f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>", unsafe_allow_html=True)
             else:
-                st.markdown(
-                    "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>",
-                    unsafe_allow_html=True,
-                )
+                st.markdown("<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>", unsafe_allow_html=True)
 
             with st.expander("🗓️ Attività dell'ultima settimana"):
                 giorni_settimana_iso = {(oggi - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)}
@@ -426,22 +433,14 @@ if file_da_leggere:
                 if not trovate:
                     st.caption("Nessuna attività trovata nell'ultima settimana.")
 
-        # Barra di progresso: km svolti oggi rispetto al piano (senza etichette tipo "target")
         km_piano_oggi = estrai_km_pianificati(allenamento_oggi)
         if km_piano_oggi and km_piano_oggi > 0:
             percentuale = min(100, round((km_svolto_oggi / km_piano_oggi) * 100))
             classe_fill = "completo" if percentuale >= 100 else ""
             st.markdown(f"<p class='progress-caption'>{km_svolto_oggi:.1f} / {km_piano_oggi:.1f} km di oggi</p>", unsafe_allow_html=True)
-            st.markdown(
-                f"<div class='progress-track'><div class='progress-fill {classe_fill}' style='width:{percentuale}%;'></div></div>",
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"<div class='progress-track'><div class='progress-fill {classe_fill}' style='width:{percentuale}%;'></div></div>", unsafe_allow_html=True)
 
         st.markdown("</div>", unsafe_allow_html=True)
-
-        if totale_non_riconosciute > 0:
-            st.caption(f"ℹ️ {totale_non_riconosciute} celle data non riconosciute nell'Excel (ignorate nel parsing).")
-
         st.markdown("---")
 
         # --- STATISTICHE DEL MESE + STREAK + BADGE ---
@@ -465,17 +464,13 @@ if file_da_leggere:
             badge.append(f"🏆 Lunga distanza: {stats['record_distanza']:.1f} km")
 
         if badge:
-            st.markdown(
-                "".join(f"<span class='badge-pill'>{b}</span>" for b in badge),
-                unsafe_allow_html=True,
-            )
+            st.markdown("".join(f"<span class='badge-pill'>{b}</span>" for b in badge), unsafe_allow_html=True)
 
         st.markdown("---")
 
         # --- HEATMAP MENSILE ---
         st.subheader("🔥 Calendario del mese")
         st.markdown(costruisci_heatmap_html(oggi, attivita_per_giorno), unsafe_allow_html=True)
-
         st.markdown("---")
 
         # --- STORICO ---
