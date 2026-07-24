@@ -6,7 +6,7 @@ import os
 import random
 
 # 1. CONFIGURAZIONE PAGINA
-st.set_page_config(page_title="Luca Tassatori Coach", page_icon="👟", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Luca Tassarotti Coach", page_icon="👟", layout="centered", initial_sidebar_state="collapsed")
 
 st.markdown("""
     <style>
