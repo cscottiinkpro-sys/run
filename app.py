@@ -49,12 +49,15 @@ st.markdown(f"""
     .progress-fill {{ height: 100%; border-radius: 999px; background-color: {COLORE_PISTA}; }}
     .progress-fill.completo {{ background-color: {COLORE_TRAGUARDO}; }}
 
-    .heatmap-weekdays {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 12px; }}
-    .heatmap-weekday {{ font-size: 0.65rem; text-align: center; color: #94a3b8; text-transform: uppercase; }}
-    .heatmap-grid {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 4px; }}
-    .heatmap-cell {{ aspect-ratio: 1; border-radius: 6px; display: flex; align-items: center; justify-content: center;
-                     font-size: 0.7rem; color: {COLORE_ASFALTO}; }}
-    .heatmap-cell.oggi {{ outline: 2px solid {COLORE_ASFALTO}; outline-offset: -2px; font-weight: 700; }}
+    .heatmap-wrapper {{ max-width: 300px; margin: 8px auto 0 auto; }}
+    .heatmap-weekdays {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }}
+    .heatmap-weekday {{ font-size: 0.6rem; text-align: center; color: #94a3b8; text-transform: uppercase; }}
+    .heatmap-grid {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-top: 4px; }}
+    .heatmap-cell {{ aspect-ratio: 1; border-radius: 5px; display: flex; flex-direction: column; align-items: center;
+                     justify-content: center; line-height: 1.05; color: {COLORE_ASFALTO}; }}
+    .heatmap-cell .hm-day {{ font-size: 0.6rem; font-weight: 600; }}
+    .heatmap-cell .hm-km {{ font-size: 0.5rem; color: #7c2d12; }}
+    .heatmap-cell.oggi {{ outline: 2px solid {COLORE_ASFALTO}; outline-offset: -2px; }}
     .heatmap-cell.vuota {{ visibility: hidden; }}
     </style>
 """, unsafe_allow_html=True)
@@ -288,16 +291,24 @@ def costruisci_heatmap_html(oggi: datetime, attivita_per_giorno: dict) -> str:
         data = datetime(oggi.year, oggi.month, giorno_num)
         data_iso = data.strftime("%Y-%m-%d")
         km = attivita_per_giorno.get(data_iso, {}).get("km", 0.0)
-        colore = colore_heatmap(km) if data.date() <= oggi.date() else "white"
-        bordo = "border: 1px dashed #e2e8f0;" if data.date() > oggi.date() else ""
+        e_futuro = data.date() > oggi.date()
+        colore = "white" if e_futuro else colore_heatmap(km)
+        bordo = "border: 1px dashed #e2e8f0;" if e_futuro else ""
         classe_oggi = " oggi" if data.date() == oggi.date() else ""
-        titolo = f"{giorno_num} {MESI_IT[oggi.month]}: {km:.1f} km" if data.date() <= oggi.date() else ""
+        titolo = f"{giorno_num} {MESI_IT[oggi.month]}: {km:.1f} km" if not e_futuro else ""
+        km_html = f'<span class="hm-km">{km:.0f}k</span>' if (not e_futuro and km > 0) else ""
         celle.append(
-            f'<div class="heatmap-cell{classe_oggi}" style="background-color:{colore};{bordo}" title="{titolo}">{giorno_num}</div>'
+            f'<div class="heatmap-cell{classe_oggi}" style="background-color:{colore};{bordo}" title="{titolo}">'
+            f'<span class="hm-day">{giorno_num}</span>{km_html}</div>'
         )
 
     intestazioni = "".join(f'<div class="heatmap-weekday">{g}</div>' for g in GIORNI_SETTIMANA_IT)
-    return f'<div class="heatmap-weekdays">{intestazioni}</div><div class="heatmap-grid">{"".join(celle)}</div>'
+    return (
+        f'<div class="heatmap-wrapper">'
+        f'<div class="heatmap-weekdays">{intestazioni}</div>'
+        f'<div class="heatmap-grid">{"".join(celle)}</div>'
+        f'</div>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -495,46 +506,39 @@ if file_da_leggere:
 
         st.markdown("---")
 
-        # --- GRAFICO SETTIMANALE: PIANIFICATO VS SVOLTO ---
-        st.subheader("📊 Andamento settimanale")
-        foglio_corrente = dati_completi.get(fogli_mesi[indice_default]) if fogli_mesi else None
+        # --- GRAFICO SETTIMANALE: ANDAMENTO DEL PASSO ---
+        st.subheader("⚡ Andamento del passo (ultimi 7 giorni)")
         giorni_settimana = [(oggi - timedelta(days=i)) for i in range(6, -1, -1)]
 
-        righe_grafico = []
+        righe_passo = []
         for giorno in giorni_settimana:
             g_iso = giorno.strftime("%Y-%m-%d")
-            km_svolto = attivita_per_giorno.get(g_iso, {}).get("km", 0.0)
+            info = attivita_per_giorno.get(g_iso)
+            passo_min_km = None
+            if info and info["attivita"]:
+                distanza_tot = sum(a.get("distance", 0) for a in info["attivita"])
+                durata_tot = sum(a.get("duration", 0) for a in info["attivita"])
+                if distanza_tot > 0 and durata_tot > 0:
+                    velocita_media = distanza_tot / durata_tot  # m/s
+                    passo_min_km = (1000 / velocita_media) / 60  # minuti per km
 
-            km_piano = 0.0
-            if foglio_corrente is not None:
-                etichetta = f"{giorno.day}-{MESI_IT[giorno.month]}".capitalize()
-                riga = foglio_corrente[foglio_corrente["Data"] == etichetta]
-                if not riga.empty:
-                    km_piano = estrai_km_pianificati(riga.iloc[0]["Programma"]) or 0.0
+            righe_passo.append({"Giorno": giorno.strftime("%d/%m"), "PassoMinKm": passo_min_km})
 
-            righe_grafico.append({"Giorno": giorno.strftime("%d/%m"), "Pianificato": km_piano, "Svolto": km_svolto})
-
-        df_grafico = pd.DataFrame(righe_grafico)
-        if df_grafico[["Pianificato", "Svolto"]].sum().sum() > 0:
-            df_lungo = df_grafico.melt(id_vars="Giorno", var_name="Tipo", value_name="Km")
-            grafico = (
-                alt.Chart(df_lungo)
-                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        df_passo = pd.DataFrame(righe_passo)
+        if df_passo["PassoMinKm"].notna().any():
+            grafico_passo = (
+                alt.Chart(df_passo.dropna(subset=["PassoMinKm"]))
+                .mark_line(point=True, color=COLORE_PISTA, strokeWidth=3)
                 .encode(
-                    x=alt.X("Giorno:N", sort=None, title=None),
-                    xOffset=alt.XOffset("Tipo:N"),
-                    y=alt.Y("Km:Q", title="Km"),
-                    color=alt.Color(
-                        "Tipo:N",
-                        scale=alt.Scale(domain=["Pianificato", "Svolto"], range=[COLORE_CIELO, COLORE_PISTA]),
-                        legend=alt.Legend(title=None, orient="top"),
-                    ),
+                    x=alt.X("Giorno:N", sort=list(df_passo["Giorno"]), title=None),
+                    y=alt.Y("PassoMinKm:Q", title="min/km", scale=alt.Scale(zero=False)),
+                    tooltip=[alt.Tooltip("Giorno:N"), alt.Tooltip("PassoMinKm:Q", title="min/km", format=".2f")],
                 )
                 .properties(height=220)
             )
-            st.altair_chart(grafico, use_container_width=True)
+            st.altair_chart(grafico_passo, use_container_width=True)
         else:
-            st.caption("Non ci sono ancora abbastanza dati (piano o Garmin) per mostrare il grafico.")
+            st.caption("Non ci sono ancora attività Garmin questa settimana per mostrare il passo.")
 
         st.markdown("---")
 
