@@ -26,12 +26,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 2. CREDENZIALI (MAI hardcoded: usa st.secrets o variabili d'ambiente)
-# Crea un file .streamlit/secrets.toml (NON committarlo su git!) con:
-#   garmin_email = "tuo@email.it"
-#   garmin_password = "tuapassword"
-GARMIN_EMAIL = st.secrets.get("garmin_email", os.environ.get("GARMIN_EMAIL", ""))
-GARMIN_PWD = st.secrets.get("garmin_password", os.environ.get("GARMIN_PASSWORD", ""))
+# 2. CREDENZIALI
+GARMIN_EMAIL = "scocla@hotmail.it"
+GARMIN_PWD = "Ciccio1994"
 
 EXCEL_FILE_PATH = "storico_salvato.xlsx"
 NOTE_LOG_PATH = "note_allenamenti_log.csv"
@@ -270,9 +267,6 @@ if uploaded_file is not None:
     st.cache_data.clear()
     st.sidebar.success("File Excel aggiornato e salvato con successo!")
 
-if not GARMIN_EMAIL or not GARMIN_PWD:
-    st.sidebar.warning("⚠️ Credenziali Garmin non configurate. Aggiungile in .streamlit/secrets.toml")
-
 file_da_leggere = EXCEL_FILE_PATH if os.path.exists(EXCEL_FILE_PATH) else None
 
 # ---------------------------------------------------------------------------
@@ -368,12 +362,7 @@ if file_da_leggere:
                     st.caption("Nessuna nota salvata finora.")
 
         else:
-            if not GARMIN_EMAIL or not GARMIN_PWD:
-                st.markdown(
-                    "<p class='workout-text'>⚠️ Configura le credenziali Garmin in secrets.toml per usare la sincronizzazione.</p>",
-                    unsafe_allow_html=True,
-                )
-            elif garmin_errore == "auth":
+            if garmin_errore == "auth":
                 st.error("❌ Credenziali Garmin non valide. Controlla email e password in secrets.toml.")
             elif garmin_errore == "connessione":
                 st.markdown(
