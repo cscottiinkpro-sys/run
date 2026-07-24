@@ -15,7 +15,7 @@ st.markdown("""
     .main-title { text-align: center; font-weight: 900; color: #1e293b; font-size: 1.8rem; margin-bottom: 5px; line-height: 1.2;}
     .motivation-box { background-color: #f8fafc; border-left: 4px solid #64748b; padding: 10px 15px; border-radius: 6px; font-style: italic; color: #475569; font-size: 0.95rem; text-align: center; margin-bottom: 20px;}
     .card-planned { background-color: #f0f9ff; padding: 15px; border-radius: 10px; border-left: 5px solid #0ea5e9; margin-bottom: 15px;}
-    .card-actual { background-color: #f0fdf4; padding: 15px; border-radius: 10px; border-left: 5px solid #22c55e; margin-bottom: 15px;}
+    .card-actual { background-color: #f0fdf4; padding: 15px; border-radius: 10px; margin-bottom: 15px;}
     .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 8px; color: #475569; text-transform: uppercase;}
     .workout-text { font-size: 1.05rem; margin:0; font-weight: 600; color: #0f172a;}
     .badge-ok { color: #16a34a; font-weight: 700; }
@@ -31,7 +31,6 @@ GARMIN_EMAIL = "scocla@hotmail.it"
 GARMIN_PWD = "Ciccio1994"
 
 EXCEL_FILE_PATH = "storico_salvato.xlsx"
-NOTE_LOG_PATH = "note_allenamenti_log.csv"
 
 FRASI_MOTIVAZIONALI = [
     "“La fatica di oggi sarà il ritmo di gara di domani.”",
@@ -96,33 +95,6 @@ def raggruppa_per_giorno(attivita: list) -> dict:
         per_giorno[data_iso]["km"] += km
         per_giorno[data_iso]["attivita"].append(act)
     return per_giorno
-
-
-# ---------------------------------------------------------------------------
-# NOTE MANUALI (STORICO)
-# ---------------------------------------------------------------------------
-
-def carica_note_log() -> pd.DataFrame:
-    if os.path.exists(NOTE_LOG_PATH):
-        try:
-            df = pd.read_csv(NOTE_LOG_PATH, dtype=str).fillna("")
-            if "Data" in df.columns and "Nota" in df.columns:
-                return df
-        except Exception:
-            pass
-    return pd.DataFrame(columns=["Data", "Nota"])
-
-
-def salva_nota_log(data_iso: str, testo: str) -> pd.DataFrame:
-    df = carica_note_log()
-    df = df[df["Data"] != data_iso]
-    nuova = pd.DataFrame([{"Data": data_iso, "Nota": testo}])
-    df = pd.concat([df, nuova], ignore_index=True)
-    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
-    df = df.sort_values("Data", ascending=False)
-    df["Data"] = df["Data"].dt.strftime("%Y-%m-%d")
-    df.to_csv(NOTE_LOG_PATH, index=False)
-    return df
 
 
 # ---------------------------------------------------------------------------
@@ -323,74 +295,44 @@ if file_da_leggere:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- ALLENAMENTO SVOLTO ---
+        # --- ALLENAMENTO SVOLTO (solo Garmin) ---
         st.markdown("<div class='card-actual'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>🟢 Allenamento Svolto</div>", unsafe_allow_html=True)
 
-        modalita = st.radio(
-            "Scegli modalità:",
-            ["Scrivi a mano", "Sincronizza da Garmin"],
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-
-        if modalita == "Scrivi a mano":
-            note_df = carica_note_log()
-            nota_esistente = ""
-            match_oggi = note_df[note_df["Data"] == oggi_iso]
-            if not match_oggi.empty:
-                nota_esistente = match_oggi.iloc[0]["Nota"]
-
-            user_note = st.text_area(
-                "Inserisci km, ritmi o sensazioni di oggi:", value=nota_esistente, height=80, key="input_manuale"
+        if garmin_errore == "auth":
+            st.error("❌ Credenziali Garmin non valide. Controlla email e password in secrets.toml.")
+        elif garmin_errore == "connessione":
+            st.markdown(
+                "<p class='workout-text'>⚠️ Garmin temporaneamente non raggiungibile.</p>",
+                unsafe_allow_html=True,
             )
-            if st.button("Salva Nota"):
-                salva_nota_log(oggi_iso, user_note)
-                st.success("Salvato!")
-
-            with st.expander("📜 Storico note"):
-                storico = carica_note_log()
-                if not storico.empty:
-                    st.dataframe(storico, use_container_width=True, hide_index=True)
-                else:
-                    st.caption("Nessuna nota salvata finora.")
-
         else:
-            if garmin_errore == "auth":
-                st.error("❌ Credenziali Garmin non valide. Controlla email e password in secrets.toml.")
-            elif garmin_errore == "connessione":
-                st.markdown(
-                    "<p class='workout-text'>⚠️ Garmin temporaneamente non raggiungibile. "
-                    "Usa la modalità manuale qui sopra se hai fretta!</p>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                dati_oggi = attivita_per_giorno.get(oggi_iso)
-                if dati_oggi and dati_oggi["attivita"]:
-                    for i, act in enumerate(dati_oggi["attivita"]):
-                        distanza = round(act.get("distance", 0) / 1000, 2)
-                        durata_min = round(act.get("duration", 0) / 60, 1)
-                        passo_str = formatta_passo(act.get("averageSpeed", 0))
-                        if i > 0:
-                            st.markdown("<hr class='garmin-divider'>", unsafe_allow_html=True)
-                        st.markdown(
-                            f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>"
-                            f"📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>",
-                            unsafe_allow_html=True,
-                        )
-                else:
+            dati_oggi = attivita_per_giorno.get(oggi_iso)
+            if dati_oggi and dati_oggi["attivita"]:
+                for i, act in enumerate(dati_oggi["attivita"]):
+                    distanza = round(act.get("distance", 0) / 1000, 2)
+                    durata_min = round(act.get("duration", 0) / 60, 1)
+                    passo_str = formatta_passo(act.get("averageSpeed", 0))
+                    if i > 0:
+                        st.markdown("<hr class='garmin-divider'>", unsafe_allow_html=True)
                     st.markdown(
-                        "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>",
+                        f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>"
+                        f"📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>",
                         unsafe_allow_html=True,
                     )
+            else:
+                st.markdown(
+                    "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>",
+                    unsafe_allow_html=True,
+                )
 
-                with st.expander("🗓️ Attività dell'ultima settimana"):
-                    if attivita_per_giorno:
-                        for data_iso in sorted(attivita_per_giorno.keys(), reverse=True):
-                            info = attivita_per_giorno[data_iso]
-                            st.markdown(f"**{data_iso}** — {info['km']:.1f} km totali ({len(info['attivita'])} attività)")
-                    else:
-                        st.caption("Nessuna attività trovata nell'ultima settimana.")
+            with st.expander("🗓️ Attività dell'ultima settimana"):
+                if attivita_per_giorno:
+                    for data_iso in sorted(attivita_per_giorno.keys(), reverse=True):
+                        info = attivita_per_giorno[data_iso]
+                        st.markdown(f"**{data_iso}** — {info['km']:.1f} km totali ({len(info['attivita'])} attività)")
+                else:
+                    st.caption("Nessuna attività trovata nell'ultima settimana.")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -430,7 +372,16 @@ if file_da_leggere:
         st.subheader("📚 Storico Allenamenti")
         if dati_completi:
             mese_scelto = st.selectbox("Seleziona periodo:", list(dati_completi.keys()), index=indice_default)
-            st.dataframe(dati_completi[mese_scelto], use_container_width=True, hide_index=True)
+            tabella_storico = dati_completi[mese_scelto]
+            etichetta_oggi = f"{giorno_oggi}-{MESI_IT[mese_oggi]}".capitalize()
+
+            def evidenzia_oggi(row):
+                if row["Data"] == etichetta_oggi:
+                    return ["background-color: #bbf7d0; font-weight: 700;"] * len(row)
+                return [""] * len(row)
+
+            tabella_stilizzata = tabella_storico.style.apply(evidenzia_oggi, axis=1)
+            st.dataframe(tabella_stilizzata, use_container_width=True, hide_index=True)
         else:
             st.info("Nessun dato leggibile trovato nell'Excel per i mesi caricati.")
 
