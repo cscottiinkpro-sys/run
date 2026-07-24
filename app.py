@@ -112,19 +112,6 @@ def sincronizza_garmin_periodo(_client, email_key: str, giorni: int = 35):
     return attivita
 
 
-@st.cache_data(ttl=60 * 30)
-def ottieni_percorso_gps(_client, activity_id):
-    """Prova a recuperare la polilinea GPS di un'attività. Ritorna None se non disponibile
-    (dipende dalla versione della libreria garminconnect e dal tipo di attività)."""
-    try:
-        dettagli = _client.get_activity_details(activity_id)
-        punti = dettagli.get("geoPolylineDTO", {}).get("polyline", [])
-        coords = [(p["lat"], p["lon"]) for p in punti if "lat" in p and "lon" in p]
-        return coords if coords else None
-    except Exception:
-        return None
-
-
 def formatta_passo(velocita_ms: float) -> str:
     if not velocita_ms or velocita_ms <= 0:
         return "N/A"
@@ -423,20 +410,6 @@ if file_da_leggere:
                         f"📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>",
                         unsafe_allow_html=True,
                     )
-
-                    # Mini mappa del percorso (se Garmin espone la polilinea GPS)
-                    percorso = ottieni_percorso_gps(garmin_client, act.get("activityId"))
-                    if percorso:
-                        df_percorso = pd.DataFrame(percorso, columns=["lat", "lon"])
-                        mappa = (
-                            alt.Chart(df_percorso)
-                            .mark_line(color=COLORE_PISTA, strokeWidth=3)
-                            .encode(x=alt.X("lon:Q", axis=None, scale=alt.Scale(zero=False)),
-                                    y=alt.Y("lat:Q", axis=None, scale=alt.Scale(zero=False)))
-                            .properties(height=140)
-                            .configure_view(strokeWidth=0)
-                        )
-                        st.altair_chart(mappa, use_container_width=True)
             else:
                 st.markdown(
                     "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>",
