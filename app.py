@@ -23,11 +23,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 2. CREDENZIALI GARMIN E FILE
+# 2. CREDENZIALI E FILE
 GARMIN_EMAIL = "scocla@hotmail.it"
 GARMIN_PWD = "Ciccio1994"
 EXCEL_FILE_PATH = "storico_salvato.xlsx"
+NOTA_FILE_PATH = f"nota_allenamento_{datetime.today().strftime('%Y%m%d')}.txt"
 
+# Frasi motivazionali
 frasi_motivazionali = [
     "“La fatica di oggi sarà il ritmo di gara di domani.”",
     "“Non correre solo con le gambe, corri con la testa e con il cuore.”",
@@ -52,7 +54,7 @@ st.markdown("<div class='home-logo'>👟</div>", unsafe_allow_html=True)
 st.markdown("<h1 class='main-title'>Luca Tassarotti Coach</h1>", unsafe_allow_html=True)
 st.markdown(f"<div class='motivation-box'>{frase_del_giorno}</div>", unsafe_allow_html=True)
 
-# 4. MENU LATERALE
+# 4. MENU LATERALE PER AGGIORNARE L'EXCEL
 st.sidebar.title("⚙️ Impostazioni")
 uploaded_file = st.sidebar.file_uploader("Aggiorna File Excel", type=["xlsx", "xls"])
 if uploaded_file is not None:
@@ -64,17 +66,7 @@ file_da_leggere = None
 if os.path.exists(EXCEL_FILE_PATH):
     file_da_leggere = EXCEL_FILE_PATH
 
-# 5. FUNZIONE VELOCE CON CACHE PER GARMIN (Evita attese ripetute)
-@st.cache_data(ttl=900) # Memorizza i dati per 15 minuti rendendo l'app istantanea
-def scarica_dati_garmin(email, pwd):
-    try:
-        client = Garmin(email, pwd)
-        client.login()
-        return client.get_activities(0, 10), None
-    except Exception as e:
-        return None, str(e)
-
-# 6. ELABORAZIONE DATI EXCEL
+# 5. ELABORAZIONE DATI EXCEL
 if file_da_leggere:
     try:
         xls = pd.ExcelFile(file_da_leggere)
@@ -150,43 +142,51 @@ if file_da_leggere:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- MOSTRA TUTTI GLI ALLENAMENTI GARMIN DEL GIORNO (Con caricamento veloce ottimizzato) ---
-        garmin_effettivo = "Sincronizzazione in corso..."
+        # --- SEZIONE SVOLTO: SCELTA TRA GARMIN O MANUALE ---
+        st.markdown("<div class='card-actual'>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>🟢 Allenamento Svolto</div>", unsafe_allow_html=True)
         
-        # Mostra un indicatore di caricamento pulito
-        with st.spinner("Connessione a Garmin in corso..."):
-            attivita, errore = scarica_dati_garmin(GARMIN_EMAIL, GARMIN_PWD)
+        modalita = st.radio("Scegli modalità:", ["Scrivi a mano (Manuale)", "Sincronizza da Garmin"], horizontal=True, label_visibility="collapsed")
         
-        if errore:
-            garmin_effettivo = f"<p class='workout-text'>⚠️ Errore di connessione a Garmin.</p>"
-        elif attivita:
-            oggi_iso = oggi.strftime('%Y-%m-%d')
-            attivita_oggi = [a for a in attivita if a.get('startTimeLocal', '').startswith(oggi_iso)]
+        if modalita == "Scrivi a mano (Manuale)":
+            nota_esistente = ""
+            if os.path.exists(NOTA_FILE_PATH):
+                with open(NOTA_FILE_PATH, "r") as f:
+                    nota_esistente = f.read()
             
-            if attivita_oggi:
-                garmin_effettivo = ""
-                for i, act in enumerate(attivita_oggi):
-                    distanza = round(act.get('distance', 0) / 1000, 2)
-                    durata_min = round(act.get('duration', 0) / 60, 1)
-                    velocita_ms = act.get('averageSpeed', 0)
-                    
-                    passo_str = f"{int((1000/velocita_ms)//60)}'{int((1000/velocita_ms)%60):02d}\"" if velocita_ms > 0 else "N/A"
-                    
-                    if i > 0:
-                        garmin_effettivo += "<hr class='garmin-divider'>"
-                        
-                    garmin_effettivo += f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>"
-            else:
-                garmin_effettivo = "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>"
+            user_note = st.text_area("Inserisci km, ritmi o sensazioni di oggi:", value=nota_esistente, height=80, key="input_manuale")
+            if st.button("Salva Nota"):
+                with open(NOTA_FILE_PATH, "w") as f:
+                    f.write(user_note)
+                st.success("Salvato!")
+        
         else:
-            garmin_effettivo = "<p class='workout-text'>Nessun dato disponibile da Garmin.</p>"
+            # Sezione Garmin integrata con gestione errori e tempi rapidi
+            try:
+                with st.spinner("Connessione a Garmin..."):
+                    client = Garmin(GARMIN_EMAIL, GARMIN_PWD)
+                    client.login()
+                    
+                    oggi_iso = oggi.strftime('%Y-%m-%d')
+                    attivita = client.get_activities(0, 10) 
+                    attivita_oggi = [a for a in attivita if a.get('startTimeLocal', '').startswith(oggi_iso)]
+                    
+                    if attivita_oggi:
+                        for i, act in enumerate(attivita_oggi):
+                            distanza = round(act.get('distance', 0) / 1000, 2)
+                            durata_min = round(act.get('duration', 0) / 60, 1)
+                            velocita_ms = act.get('averageSpeed', 0)
+                            passo_str = f"{int((1000/velocita_ms)//60)}'{int((1000/velocita_ms)%60):02d}\"" if velocita_ms > 0 else "N/A"
+                            
+                            if i > 0:
+                                st.markdown("<hr class='garmin-divider'>", unsafe_allow_html=True)
+                            st.markdown(f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>", unsafe_allow_html=True)
+            except Exception as e:
+                st.markdown("<p class='workout-text'>⚠️ Garmin temporaneamente occupato. Usa la modalità manuale qui sopra se hai fretta!</p>", unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div class="card-actual">
-            <div class="card-title">🟢 Svolto su Garmin</div>
-            {garmin_effettivo}
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
         st.markdown("---")
 
