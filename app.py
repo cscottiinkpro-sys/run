@@ -205,6 +205,7 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int):
         if is_oggi and w and w not in ("nan", ""):
             allenamento_oggi = w
 
+    mese_data.reverse()  # più recenti in alto, più vecchi in basso
     return mese_data, allenamento_oggi, non_riconosciute
 
 
@@ -322,25 +323,18 @@ if file_da_leggere:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- CONFRONTO PIANIFICATO VS SVOLTO (oggi) ---
-        km_piano_oggi = estrai_km_pianificati(allenamento_oggi)
-        km_svolto_oggi = attivita_per_giorno.get(oggi_iso, {}).get("km")
-        classe, emoji, messaggio = valuta_aderenza(km_piano_oggi, km_svolto_oggi)
-        if messaggio:
-            st.markdown(f"<p class='{classe}'>{emoji} {messaggio}</p>", unsafe_allow_html=True)
-
         # --- ALLENAMENTO SVOLTO ---
         st.markdown("<div class='card-actual'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>🟢 Allenamento Svolto</div>", unsafe_allow_html=True)
 
         modalita = st.radio(
             "Scegli modalità:",
-            ["Scrivi a mano (Manuale)", "Sincronizza da Garmin"],
+            ["Scrivi a mano", "Sincronizza da Garmin"],
             horizontal=True,
             label_visibility="collapsed",
         )
 
-        if modalita == "Scrivi a mano (Manuale)":
+        if modalita == "Scrivi a mano":
             note_df = carica_note_log()
             nota_esistente = ""
             match_oggi = note_df[note_df["Data"] == oggi_iso]
