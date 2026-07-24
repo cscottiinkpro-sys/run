@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import altair as alt
 import re
 import calendar
 from datetime import datetime, timedelta
@@ -476,42 +475,6 @@ if file_da_leggere:
         # --- HEATMAP MENSILE ---
         st.subheader("🔥 Calendario del mese")
         st.markdown(costruisci_heatmap_html(oggi, attivita_per_giorno), unsafe_allow_html=True)
-
-        st.markdown("---")
-
-        # --- GRAFICO SETTIMANALE: ANDAMENTO DEL PASSO ---
-        st.subheader("⚡ Andamento del passo (ultimi 7 giorni)")
-        giorni_settimana = [(oggi - timedelta(days=i)) for i in range(6, -1, -1)]
-
-        righe_passo = []
-        for giorno in giorni_settimana:
-            g_iso = giorno.strftime("%Y-%m-%d")
-            info = attivita_per_giorno.get(g_iso)
-            passo_min_km = None
-            if info and info["attivita"]:
-                distanza_tot = sum(a.get("distance", 0) for a in info["attivita"])
-                durata_tot = sum(a.get("duration", 0) for a in info["attivita"])
-                if distanza_tot > 0 and durata_tot > 0:
-                    velocita_media = distanza_tot / durata_tot  # m/s
-                    passo_min_km = (1000 / velocita_media) / 60  # minuti per km
-
-            righe_passo.append({"Giorno": giorno.strftime("%d/%m"), "PassoMinKm": passo_min_km})
-
-        df_passo = pd.DataFrame(righe_passo)
-        if df_passo["PassoMinKm"].notna().any():
-            grafico_passo = (
-                alt.Chart(df_passo.dropna(subset=["PassoMinKm"]))
-                .mark_line(point=True, color=COLORE_PISTA, strokeWidth=3)
-                .encode(
-                    x=alt.X("Giorno:N", sort=list(df_passo["Giorno"]), title=None),
-                    y=alt.Y("PassoMinKm:Q", title="min/km", scale=alt.Scale(zero=False)),
-                    tooltip=[alt.Tooltip("Giorno:N"), alt.Tooltip("PassoMinKm:Q", title="min/km", format=".2f")],
-                )
-                .properties(height=220)
-            )
-            st.altair_chart(grafico_passo, use_container_width=True)
-        else:
-            st.caption("Non ci sono ancora attività Garmin questa settimana per mostrare il passo.")
 
         st.markdown("---")
 
