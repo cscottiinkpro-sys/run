@@ -5,7 +5,7 @@ import calendar
 from datetime import datetime, timedelta
 from garminconnect import Garmin, GarminConnectAuthenticationError
 import os
-import requests
+import urllib.parse
 
 # 1. CONFIGURAZIONE PAGINA E FIX VISIVI
 st.set_page_config(page_title="Luca Tassarotti Coach", page_icon="👟", layout="centered", initial_sidebar_state="expanded")
@@ -89,7 +89,7 @@ GIORNI_SETTIMANA_IT = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
 REGEX_KM = re.compile(r'(\d+(?:[.,]\d+)?)\s*km', re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
-# GARMIN - FUNZIONI OTTIMIZZATE CON SUPPORTO DIRETTO API
+# GARMIN - LETTURA ATTIVITÀ
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(ttl=60 * 30) 
@@ -109,60 +109,21 @@ def sincronizza_garmin_periodo(_client, email_key: str, giorni: int = 35):
         attivita = [a for a in attivita if inizio.isoformat() <= a.get('startTimeLocal', '')[:10] <= fine.isoformat()]
     return attivita
 
-def push_allenamenti_su_garmin(client, allenamenti_futuri):
-    successi = 0
-    errori = []
-    
+def genera_file_ics(allenamenti_futuri):
+    """Crea un file di calendario standard (.ics) compatibile con Google Calendar, Apple e Garmin."""
+    ics_content = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//MTD Training Crew//IT\n"
     for data_iso, desc in allenamenti_futuri.items():
         if not desc or str(desc).strip().lower() == "riposo":
             continue
-        try:
-            # Struttura dati ufficiale Garmin Connect per un allenamento di corsa libero
-            workout_payload = {
-                "workoutName": desc[:15] + "...",
-                "description": desc,
-                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
-                "workoutSegments": [{
-                    "segmentOrder": 1,
-                    "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
-                    "workoutSteps": [{
-                        "type": "ExecutableStepDTO",
-                        "stepId": None,
-                        "stepOrder": 1,
-                        "durationType": {"stepDurationTypeId": 1, "stepDurationTypeKey": "lap.button"},
-                        "targetType": {"stepTargetTypeId": 1, "stepTargetTypeKey": "no_target"},
-                    }]
-                }]
-            }
-            
-            workout_id = None
-            
-            # Invio diretto tramite la sessione sicura di garth (supportata da garminconnect)
-            if hasattr(client, 'garth') and client.garth:
-                response = client.garth.client.post("connect", "/workout-service/workout", json=workout_payload)
-                if response.status_code in [200, 201]:
-                    workout_id = response.json().get("workoutId")
-            
-            # Fallback alternativo se garth non risponde
-            if not workout_id and hasattr(client, 'add_workout'):
-                res = client.add_workout(workout_payload)
-                workout_id = res.get("workoutId")
-
-            # Se l'allenamento è stato creato con successo, lo pianifichiamo nel calendario alla data esatta
-            if workout_id:
-                schedule_payload = {"date": data_iso}
-                if hasattr(client, 'garth') and client.garth:
-                    client.garth.client.post("connect", f"/workout-service/schedule/{workout_id}", json=schedule_payload)
-                elif hasattr(client, 'schedule_workout'):
-                    client.schedule_workout(workout_id, data_iso)
-                successi += 1
-            else:
-                errori.append(f"Impossibile registrare l'ID per {data_iso}")
-                
-        except Exception as e:
-            errori.append(f"Errore su {data_iso}: {str(e)}")
-            
-    return successi, errori
+        data_pulita = data_iso.replace("-", "")
+        ics_content += "BEGIN:VEVENT\n"
+        ics_content += f"DTSTART;VALUE=DATE:{data_pulita}\n"
+        ics_content += f"DTEND;VALUE=DATE:{data_pulita}\n"
+        ics_content += f"SUMMARY:🏃‍♂️ {desc}\n"
+        ics_content += f"DESCRIPTION:Allenamento Coach Luca Tassarotti\\n{desc}\n"
+        ics_content += "END:VEVENT\n"
+    ics_content += "END:VCALENDAR"
+    return ics_content
 
 def formatta_passo(velocita_ms: float) -> str:
     if not velocita_ms or velocita_ms <= 0:
@@ -294,7 +255,6 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int, 
             allenamento_desc = w if w != "nan" else "Riposo"
             mese_data.append({"Data": d_str.capitalize(), "Programma": allenamento_desc})
             
-            # Sincronizza rigorosamente da oggi in poi fino a 14 giorni
             if data_reale and data_reale.date() >= datetime.today().date() and data_reale.date() <= (datetime.today().date() + timedelta(days=14)):
                 pianificazione_futura[data_reale.strftime("%Y-%m-%d")] = allenamento_desc
 
@@ -403,21 +363,19 @@ if file_da_leggere:
             totale_non_riconosciute += non_ric
             piani_futuri.update(futuri)
 
-        # SEZIONE SIDEBAR: Sincronizzazione Piani Futuri
+        # SEZIONE SIDEBAR: Download Calendario Calendario (.ics)
         st.sidebar.markdown("---")
         st.sidebar.markdown("### 2. Sincronizzazione")
-        if garmin_client and piani_futuri:
-            st.sidebar.caption(f"**{len(piani_futuri)} allenamenti** pronti (da oggi a 2 settimane).")
-            
-            if st.sidebar.button("Invia al Garmin"):
-                with st.spinner("Invio in corso..."):
-                    caricati, errori = push_allenamenti_su_garmin(garmin_client, piani_futuri)
-                if caricati > 0:
-                    st.sidebar.success(f"{caricati} allenamenti caricati su Garmin!")
-                if errori:
-                    st.sidebar.error(f"Errore: {errori[0]}")
-        elif not garmin_client:
-            st.sidebar.caption("Garmin disconnesso.")
+        if piani_futuri:
+            st.sidebar.caption(f"**{len(piani_futuri)} allenamenti** pronti per il calendario.")
+            ics_data = genera_file_ics(piani_futuri)
+            st.sidebar.download_button(
+                label="📥 Scarica Calendario (Garmin/Google)",
+                data=ics_data,
+                file_name="allenamenti_coach.ics",
+                mime="text/calendar",
+                help="Clicca per scaricare il file ed importarlo direttamente nel calendario del telefono o Garmin Connect."
+            )
         else:
             st.sidebar.caption("Nessun allenamento futuro trovato.")
 
