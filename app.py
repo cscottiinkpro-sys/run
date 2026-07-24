@@ -37,12 +37,11 @@ frasi_motivazionali = [
     "“Se vuoi vincere qualcosa, corri 100 metri. Se vuoi goderti un'altra vita, corri la maratona.”",
     "“Il miracolo non è che ho terminato. Il miracolo è che ho avuto il coraggio di iniziare.”"
 ]
-# Seleziona una frase basata sul giorno dell'anno per mantenerla fissa oggi
 frase_del_giorno = frasi_motivazionali[datetime.today().timetuple().tm_yday % len(frasi_motivazionali)]
 
 # 3. DATE E CALENDARIO
 oggi = datetime.today()
-giorno_oggi = oggi.day  
+giorno_oggi =oggi.day  
 mese_oggi = oggi.month  
 
 mesi_completi = {1:'gennaio', 2:'febbraio', 3:'marzo', 4:'aprile', 5:'maggio', 6:'giugno', 7:'luglio', 8:'agosto', 9:'settembre', 10:'ottobre', 11:'novembre', 12:'dicembre'}
@@ -51,7 +50,7 @@ mesi_it = {1:'gen', 2:'feb', 3:'mar', 4:'apr', 5:'mag', 6:'giu', 7:'lug', 8:'ago
 foglio_default_target = f"{mesi_completi[mese_oggi]}{str(oggi.year)[-2:]}"
 
 st.markdown("<div class='home-logo'>👟</div>", unsafe_allow_html=True)
-st.markdown("<h1 class='main-title'>Luca Tassatori Coach</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='main-title'>Luca Tassarotti Coach</h1>", unsafe_allow_html=True)
 st.markdown(f"<div class='motivation-box'>{frase_del_giorno}</div>", unsafe_allow_html=True)
 
 # 4. MENU LATERALE SOLO PER AGGIORNARE L'EXCEL
