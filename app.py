@@ -23,12 +23,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 2. CREDENZIALI GARMIN FISSE E SALVATE
+# 2. CREDENZIALI GARMIN E FILE
 GARMIN_EMAIL = "scocla@hotmail.it"
 GARMIN_PWD = "Ciccio1994"
 EXCEL_FILE_PATH = "storico_salvato.xlsx"
 
-# Frasi motivazionali per il runner
 frasi_motivazionali = [
     "“La fatica di oggi sarà il ritmo di gara di domani.”",
     "“Non correre solo con le gambe, corri con la testa e con il cuore.”",
@@ -41,7 +40,7 @@ frase_del_giorno = frasi_motivazionali[datetime.today().timetuple().tm_yday % le
 
 # 3. DATE E CALENDARIO
 oggi = datetime.today()
-giorno_oggi =oggi.day  
+giorno_oggi = oggi.day  
 mese_oggi = oggi.month  
 
 mesi_completi = {1:'gennaio', 2:'febbraio', 3:'marzo', 4:'aprile', 5:'maggio', 6:'giugno', 7:'luglio', 8:'agosto', 9:'settembre', 10:'ottobre', 11:'novembre', 12:'dicembre'}
@@ -53,7 +52,7 @@ st.markdown("<div class='home-logo'>👟</div>", unsafe_allow_html=True)
 st.markdown("<h1 class='main-title'>Luca Tassarotti Coach</h1>", unsafe_allow_html=True)
 st.markdown(f"<div class='motivation-box'>{frase_del_giorno}</div>", unsafe_allow_html=True)
 
-# 4. MENU LATERALE SOLO PER AGGIORNARE L'EXCEL
+# 4. MENU LATERALE
 st.sidebar.title("⚙️ Impostazioni")
 uploaded_file = st.sidebar.file_uploader("Aggiorna File Excel", type=["xlsx", "xls"])
 if uploaded_file is not None:
@@ -65,7 +64,17 @@ file_da_leggere = None
 if os.path.exists(EXCEL_FILE_PATH):
     file_da_leggere = EXCEL_FILE_PATH
 
-# 5. ELABORAZIONE DATI EXCEL
+# 5. FUNZIONE VELOCE CON CACHE PER GARMIN (Evita attese ripetute)
+@st.cache_data(ttl=900) # Memorizza i dati per 15 minuti rendendo l'app istantanea
+def scarica_dati_garmin(email, pwd):
+    try:
+        client = Garmin(email, pwd)
+        client.login()
+        return client.get_activities(0, 10), None
+    except Exception as e:
+        return None, str(e)
+
+# 6. ELABORAZIONE DATI EXCEL
 if file_da_leggere:
     try:
         xls = pd.ExcelFile(file_da_leggere)
@@ -141,14 +150,17 @@ if file_da_leggere:
         </div>
         """, unsafe_allow_html=True)
 
-        # --- MOSTRA TUTTI GLI ALLENAMENTI GARMIN DEL GIORNO ---
+        # --- MOSTRA TUTTI GLI ALLENAMENTI GARMIN DEL GIORNO (Con caricamento veloce ottimizzato) ---
         garmin_effettivo = "Sincronizzazione in corso..."
-        try:
-            client = Garmin(GARMIN_EMAIL, GARMIN_PWD)
-            client.login()
-            
+        
+        # Mostra un indicatore di caricamento pulito
+        with st.spinner("Connessione a Garmin in corso..."):
+            attivita, errore = scarica_dati_garmin(GARMIN_EMAIL, GARMIN_PWD)
+        
+        if errore:
+            garmin_effettivo = f"<p class='workout-text'>⚠️ Errore di connessione a Garmin.</p>"
+        elif attivita:
             oggi_iso = oggi.strftime('%Y-%m-%d')
-            attivita = client.get_activities(0, 10) 
             attivita_oggi = [a for a in attivita if a.get('startTimeLocal', '').startswith(oggi_iso)]
             
             if attivita_oggi:
@@ -166,8 +178,8 @@ if file_da_leggere:
                     garmin_effettivo += f"<p class='workout-text'><strong>{act.get('activityName', 'Attività')}</strong><br>📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>"
             else:
                 garmin_effettivo = "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>"
-        except Exception as e:
-            garmin_effettivo = f"<p class='workout-text'>⚠️ Errore di connessione a Garmin. Riprova più tardi.</p>"
+        else:
+            garmin_effettivo = "<p class='workout-text'>Nessun dato disponibile da Garmin.</p>"
 
         st.markdown(f"""
         <div class="card-actual">
