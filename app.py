@@ -40,14 +40,13 @@ credenziali = carica_credenziali()
 
 # 3. DATE E CALENDARIO
 oggi = datetime.today()
-mesi_it = {1:'gen', 2:'feb', 3:'mar', 4:'apr', 5:'mag', 6:'giu', 7:'lug', 8:'ago', 9:'set', 10:'ott', 11:'nov', 12:'dic'}
-mesi_en = {1:'jan', 2:'feb', 3:'mar', 4:'apr', 5:'may', 6:'jun', 7:'jul', 8:'aug', 9:'sep', 10:'oct', 11:'nov', 12:'dec'}
-mesi_completi = {1:'gennaio', 2:'febbraio', 3:'marzo', 4:'aprile', 5:'maggio', 6:'giugno', 7:'luglio', 8:'agosto', 9:'settembre', 10:'ottobre', 11:'novembre', 12:'dicembre'}
+giorno_oggi = oggi.day  # Esempio: 24
+mese_oggi = oggi.month  # Esempio: 7 (luglio)
 
-# Calcola il nome del foglio di default 
-foglio_default_target = f"{mesi_completi[oggi.month]}{str(oggi.year)[-2:]}"
-giorno_cerca_it = f"{oggi.day}-{mesi_it[oggi.month]}"
-giorno_cerca_en = f"{oggi.day}-{mesi_en[oggi.month]}"
+mesi_completi = {1:'gennaio', 2:'febbraio', 3:'marzo', 4:'aprile', 5:'maggio', 6:'giugno', 7:'luglio', 8:'agosto', 9:'settembre', 10:'ottobre', 11:'novembre', 12:'dicembre'}
+mesi_it = {1:'gen', 2:'feb', 3:'mar', 4:'apr', 5:'mag', 6:'giu', 7:'lug', 8:'ago', 9:'set', 10:'ott', 11:'nov', 12:'dic'}
+
+foglio_default_target = f"{mesi_completi[mese_oggi]}{str(oggi.year)[-2:]}"
 
 st.markdown("<div class='home-logo'>👟</div>", unsafe_allow_html=True)
 st.markdown("<h1 class='main-title'>Luca Tassatori Coach</h1>", unsafe_allow_html=True)
@@ -59,7 +58,7 @@ uploaded_file = st.sidebar.file_uploader("1. Aggiorna File Excel", type=["xlsx",
 if uploaded_file is not None:
     with open(EXCEL_FILE_PATH, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    st.sidebar.success("File salvato! Non dovrai ricaricarlo.")
+    st.sidebar.success("File salvato con successo!")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("2. Accesso Garmin")
@@ -74,7 +73,7 @@ file_da_leggere = None
 if os.path.exists(EXCEL_FILE_PATH):
     file_da_leggere = EXCEL_FILE_PATH
 
-# 5. ELABORAZIONE DATI EXCEL
+# 5. ELABORAZIONE DATI EXCEL CON NUOVO MOTORE DI SCANSIONE
 if file_da_leggere:
     try:
         xls = pd.ExcelFile(file_da_leggere)
@@ -93,37 +92,57 @@ if file_da_leggere:
             df = pd.read_excel(xls, sheet_name=foglio, header=None)
             mese_data = []
             
+            # Cerca in tutto il foglio la riga delle date e la riga degli allenamenti
             riga_date_idx = -1
-            for r_idx in range(min(10, len(df))):
-                for val in df.iloc[r_idx].values:
+            for r_idx in range(len(df)):
+                riga_valori = df.iloc[r_idx].values
+                for val in riga_valori:
                     val_str = str(val).lower()
-                    if f"-{mesi_it[oggi.month]}" in val_str or f"-{mesi_en[oggi.month]}" in val_str:
+                    # Se trova riferimenti al mese corrente (es. 'lug' o 'jul' o timestamp con il giorno)
+                    if f"-{mesi_it[mese_oggi]}" in val_str or f"/{mese_oggi}/" in val_str or "lug" in val_str or "jul" in val_str:
                         riga_date_idx = r_idx
                         break
                 if riga_date_idx != -1:
                     break
             
-            if riga_date_idx != -1 and (riga_date_idx + 2) < len(df):
+            # Se non ha trovato una riga specifica con le sigle, proviamo a prendere la riga 3 o 4 (standard dei tuoi file)
+            if riga_date_idx == -1 and len(df) > 3:
+                riga_date_idx = 3
+            
+            # Definiamo la riga degli allenamenti (di solito 2 righe sotto le date)
+            riga_workout_idx = riga_date_idx + 2 if (riga_date_idx + 2) < len(df) else riga_date_idx + 1
+            
+            if riga_date_idx != -1 and riga_workout_idx < len(df):
                 row_dates = df.iloc[riga_date_idx].values
-                row_workouts = df.iloc[riga_date_idx + 2].values
+                row_workouts = df.iloc[riga_workout_idx].values
                 
-                for col_idx in range(1, len(row_dates)):
+                for col_idx in range(len(row_dates)):
                     d_raw = row_dates[col_idx]
-                    w = str(row_workouts[col_idx]).strip()
+                    w = str(row_workouts[col_idx]).strip() if col_idx < len(row_workouts) else ""
                     
-                    if pd.notna(d_raw) and w and w != "nan":
-                        if isinstance(d_raw, datetime):
+                    if pd.notna(d_raw):
+                        d_str = ""
+                        is_oggi = False
+                        
+                        # Controllo se è una data in formato datetime di Excel
+                        if isinstance(d_raw, datetime) or type(d_raw).__name__ == 'Timestamp':
                             d_str = f"{d_raw.day}-{mesi_it.get(d_raw.month, '')}"
+                            if d_raw.day == giorno_oggi and d_raw.month == mese_oggi:
+                                is_oggi = True
                         else:
                             d_str = str(d_raw).strip()
-                            
-                        mese_data.append({"Data": d_str.capitalize(), "Programma": w})
+                            d_lower = d_str.lower()
+                            # Controlla se contiene il numero del giorno esatto (es. "24") e fa parte di luglio
+                            if (f"{giorno_oggi}-" in d_lower or f"{giorno_oggi} " in d_lower or d_lower.startswith(str(giorno_oggi))) and ("lug" in d_lower or "jul" in d_lower or str(mese_oggi) in d_lower):
+                                is_oggi = True
                         
-                        # Cerca il match esatto per oggi
-                        d_str_lower = str(d_raw).lower().replace(" ", "")
-                        if (giorno_cerca_it in d_str_lower) or (giorno_cerca_en in d_str_lower) or (isinstance(d_raw, datetime) and d_raw.day == oggi.day and d_raw.month == oggi.month):
+                        if d_str and d_str != "nan":
+                            mese_data.append({"Data": d_str.capitalize(), "Programma": w if w != "nan" else "Riposo"})
+                        
+                        # Se è oggi e c'è un allenamento valido
+                        if is_oggi and w and w != "nan" and w != "":
                             allenamento_oggi = w
-            
+
             if mese_data:
                 dati_completi[foglio] = pd.DataFrame(mese_data)
 
@@ -145,15 +164,11 @@ if file_da_leggere:
                 client.login()
                 
                 oggi_iso = oggi.strftime('%Y-%m-%d')
-                # Recupero le ultime 10 attività per sicurezza, in caso di multisessioni o attività salvate nei giorni scorsi non caricate.
                 attivita = client.get_activities(0, 10) 
-                
-                # Trovo TUTTE le attività che iniziano con la data di oggi
                 attivita_oggi = [a for a in attivita if a.get('startTimeLocal', '').startswith(oggi_iso)]
                 
                 if attivita_oggi:
                     garmin_effettivo = ""
-                    # Cicla su tutte le attività trovate per la giornata odierna
                     for i, act in enumerate(attivita_oggi):
                         distanza = round(act.get('distance', 0) / 1000, 2)
                         durata_min = round(act.get('duration', 0) / 60, 1)
@@ -161,7 +176,6 @@ if file_da_leggere:
                         
                         passo_str = f"{int((1000/velocita_ms)//60)}'{int((1000/velocita_ms)%60):02d}\"" if velocita_ms > 0 else "N/A"
                         
-                        # Se è la seconda attività (o terza), aggiunge una linea di separazione
                         if i > 0:
                             garmin_effettivo += "<hr class='garmin-divider'>"
                             
@@ -169,7 +183,7 @@ if file_da_leggere:
                 else:
                     garmin_effettivo = "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>"
             except Exception as e:
-                garmin_effettivo = f"<p class='workout-text'>⚠️ Errore credenziali Garmin. Apri il menu a sinistra e salvale di nuovo.</p>"
+                garmin_effettivo = f"<p class='workout-text'>⚠️ Errore credenziali Garmin. Controllale nel menu a sinistra.</p>"
 
         st.markdown(f"""
         <div class="card-actual">
