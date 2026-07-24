@@ -5,9 +5,10 @@ import calendar
 from datetime import datetime, timedelta
 from garminconnect import Garmin, GarminConnectAuthenticationError
 import os
+import requests
 
 # 1. CONFIGURAZIONE PAGINA E FIX VISIVI
-st.set_page_config(page_title="MTD Training Crew", page_icon="👟", layout="centered", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Luca Tassarotti Coach", page_icon="👟", layout="centered", initial_sidebar_state="expanded")
 
 # ---------------------------------------------------------------------------
 # PALETTE (a tema corsa/pista)
@@ -18,7 +19,7 @@ COLORE_PISTA_CHIARO = "#fed7aa"
 COLORE_CIELO = "#0ea5e9"      
 COLORE_TRAGUARDO = "#16a34a"  
 COLORE_NEBBIA = "#f1f5f9"     
-COLORE_SIDEBAR = "#f8fafc"    # Colore chiaro per la barra laterale
+COLORE_SIDEBAR = "#f8fafc"    # Barra laterale chiara
 
 st.markdown(f"""
     <style>
@@ -27,10 +28,10 @@ st.markdown(f"""
     html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
     .block-container {{ padding: 1.5rem 1rem !important; max-width: 100%; overflow-x: hidden; }}
     
-    /* MENU LATERALE CHIARO */
+    /* MENU LATERALE CHIARO E PULITO */
     [data-testid="stSidebar"] {{ background-color: {COLORE_SIDEBAR}; border-right: 1px solid #e2e8f0; }}
     [data-testid="stSidebar"] * {{ color: {COLORE_ASFALTO} !important; }}
-    [data-testid="stSidebar"] hr {{ border-color: #cbd5e1; margin: 20px 0; }}
+    [data-testid="stSidebar"] hr {{ border-color: #cbd5e1; margin: 15px 0; }}
     
     .home-logo {{ text-align: center; font-size: 45px; margin-bottom: -15px; }}
     .main-title {{ text-align: center; font-family: 'Oswald', sans-serif; font-weight: 700; letter-spacing: 1px;
@@ -88,7 +89,7 @@ GIORNI_SETTIMANA_IT = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
 REGEX_KM = re.compile(r'(\d+(?:[.,]\d+)?)\s*km', re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
-# GARMIN - FUNZIONI
+# GARMIN - FUNZIONI OTTIMIZZATE CON SUPPORTO DIRETTO API
 # ---------------------------------------------------------------------------
 
 @st.cache_resource(ttl=60 * 30) 
@@ -116,7 +117,8 @@ def push_allenamenti_su_garmin(client, allenamenti_futuri):
         if not desc or str(desc).strip().lower() == "riposo":
             continue
         try:
-            workout = {
+            # Struttura dati ufficiale Garmin Connect per un allenamento di corsa libero
+            workout_payload = {
                 "workoutName": desc[:15] + "...",
                 "description": desc,
                 "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
@@ -135,23 +137,27 @@ def push_allenamenti_su_garmin(client, allenamenti_futuri):
             
             workout_id = None
             
-            if hasattr(client, 'add_workout'):
-                res = client.add_workout(workout)
+            # Invio diretto tramite la sessione sicura di garth (supportata da garminconnect)
+            if hasattr(client, 'garth') and client.garth:
+                response = client.garth.client.post("connect", "/workout-service/workout", json=workout_payload)
+                if response.status_code in [200, 201]:
+                    workout_id = response.json().get("workoutId")
+            
+            # Fallback alternativo se garth non risponde
+            if not workout_id and hasattr(client, 'add_workout'):
+                res = client.add_workout(workout_payload)
                 workout_id = res.get("workoutId")
-            elif hasattr(client, 'garth'):
-                res = client.garth.client.post("garminconnect", "/workout-service/workout", json=workout).json()
-                workout_id = res.get("workoutId")
-            else:
-                errori.append("Libreria di sistema non compatibile con l'upload.")
-                break
 
+            # Se l'allenamento è stato creato con successo, lo pianifichiamo nel calendario alla data esatta
             if workout_id:
-                payload_date = {"date": data_iso}
-                if hasattr(client, 'schedule_workout'):
+                schedule_payload = {"date": data_iso}
+                if hasattr(client, 'garth') and client.garth:
+                    client.garth.client.post("connect", f"/workout-service/schedule/{workout_id}", json=schedule_payload)
+                elif hasattr(client, 'schedule_workout'):
                     client.schedule_workout(workout_id, data_iso)
-                elif hasattr(client, 'garth'):
-                    client.garth.client.post("garminconnect", f"/workout-service/schedule/{workout_id}", json=payload_date)
                 successi += 1
+            else:
+                errori.append(f"Impossibile registrare l'ID per {data_iso}")
                 
         except Exception as e:
             errori.append(f"Errore su {data_iso}: {str(e)}")
@@ -288,6 +294,7 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int, 
             allenamento_desc = w if w != "nan" else "Riposo"
             mese_data.append({"Data": d_str.capitalize(), "Programma": allenamento_desc})
             
+            # Sincronizza rigorosamente da oggi in poi fino a 14 giorni
             if data_reale and data_reale.date() >= datetime.today().date() and data_reale.date() <= (datetime.today().date() + timedelta(days=14)):
                 pianificazione_futura[data_reale.strftime("%Y-%m-%d")] = allenamento_desc
 
@@ -345,16 +352,16 @@ frase_del_giorno = FRASI_MOTIVAZIONALI[oggi.timetuple().tm_yday % len(FRASI_MOTI
 st.markdown(f"<div class='motivation-box'>{frase_del_giorno}</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
-# SIDEBAR E AZIONI MANUALI
+# SIDEBAR CHIARA E PULITA
 # ---------------------------------------------------------------------------
 st.sidebar.title("⚙️ Gestione App")
 st.sidebar.markdown("### 1. Storico Database")
-uploaded_file = st.sidebar.file_uploader("Importa Database Vecchio o Nuovo", type=["xlsx", "xls"])
+uploaded_file = st.sidebar.file_uploader("Importa Database", type=["xlsx", "xls"])
 if uploaded_file is not None:
     with open(EXCEL_FILE_PATH, "wb") as f:
         f.write(uploaded_file.getbuffer())
     st.cache_data.clear()
-    st.sidebar.success("Database aggiornato con successo!")
+    st.sidebar.success("Database aggiornato!")
 
 file_da_leggere = EXCEL_FILE_PATH if os.path.exists(EXCEL_FILE_PATH) else None
 attivita_periodo = []
@@ -398,21 +405,21 @@ if file_da_leggere:
 
         # SEZIONE SIDEBAR: Sincronizzazione Piani Futuri
         st.sidebar.markdown("---")
-        st.sidebar.markdown("### 2. Sincronizzazione Calendario")
+        st.sidebar.markdown("### 2. Sincronizzazione")
         if garmin_client and piani_futuri:
-            st.sidebar.caption(f"Trovati **{len(piani_futuri)} allenamenti programmati** (da oggi alle prossime 2 settimane).")
+            st.sidebar.caption(f"**{len(piani_futuri)} allenamenti** pronti (da oggi a 2 settimane).")
             
-            if st.sidebar.button("Invia prossime 2 settimane al Garmin"):
-                with st.spinner("Invio in corso. Attendi..."):
+            if st.sidebar.button("Invia al Garmin"):
+                with st.spinner("Invio in corso..."):
                     caricati, errori = push_allenamenti_su_garmin(garmin_client, piani_futuri)
                 if caricati > 0:
-                    st.sidebar.success(f"{caricati} allenamenti caricati su Garmin Connect!")
+                    st.sidebar.success(f"{caricati} allenamenti caricati su Garmin!")
                 if errori:
-                    st.sidebar.error(f"Errore caricamento. Dettagli sistema: {errori[0]}")
+                    st.sidebar.error(f"Errore: {errori[0]}")
         elif not garmin_client:
-            st.sidebar.caption("Garmin disconnesso, sincronizzazione disabilitata.")
+            st.sidebar.caption("Garmin disconnesso.")
         else:
-            st.sidebar.caption("Nessun allenamento futuro trovato. Controlla il foglio Excel o le date.")
+            st.sidebar.caption("Nessun allenamento futuro trovato.")
 
         # --- ALLENAMENTO PROGRAMMATO ---
         st.subheader(f"⚡ Oggi ({oggi.strftime('%d/%m/%Y')})")
@@ -430,9 +437,9 @@ if file_da_leggere:
         km_svolto_oggi = 0.0
 
         if garmin_errore == "auth":
-            st.error("❌ Credenziali Garmin non valide. Controllale nel codice.")
+            st.error("❌ Credenziali Garmin non valide.")
         elif garmin_errore == "connessione":
-            st.markdown("<p class='workout-text'>⚠️ Garmin temporaneamente non raggiungibile.</p>", unsafe_allow_html=True)
+            st.markdown("<p class='workout-text'>⚠️ Garmin non raggiungibile.</p>", unsafe_allow_html=True)
         else:
             dati_oggi = attivita_per_giorno.get(oggi_iso)
             if dati_oggi and dati_oggi["attivita"]:
