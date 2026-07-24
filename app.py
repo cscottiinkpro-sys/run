@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 import re
+import calendar
 from datetime import datetime, timedelta
 from garminconnect import Garmin, GarminConnectAuthenticationError
 import os
@@ -8,21 +10,52 @@ import os
 # 1. CONFIGURAZIONE PAGINA
 st.set_page_config(page_title="Luca Tassarotti Coach", page_icon="👟", layout="centered", initial_sidebar_state="collapsed")
 
-st.markdown("""
+# ---------------------------------------------------------------------------
+# PALETTE (a tema corsa/pista) — cambia solo qui per ridefinire i colori
+# ---------------------------------------------------------------------------
+COLORE_ASFALTO = "#1e293b"    # testo principale, sfondo scuro
+COLORE_PISTA = "#ea580c"      # dati Garmin / svolto
+COLORE_PISTA_CHIARO = "#fed7aa"
+COLORE_CIELO = "#0ea5e9"      # piano del coach / pianificato
+COLORE_TRAGUARDO = "#16a34a"  # SOLO per badge/traguardi raggiunti
+COLORE_NEBBIA = "#f1f5f9"     # sfondo neutro / giorni senza attività
+
+st.markdown(f"""
     <style>
-    .block-container { padding: 1.5rem 1rem !important; max-width: 100%; overflow-x: hidden; }
-    .home-logo { text-align: center; font-size: 45px; margin-bottom: -15px; }
-    .main-title { text-align: center; font-weight: 900; color: #1e293b; font-size: 1.8rem; margin-bottom: 5px; line-height: 1.2;}
-    .motivation-box { background-color: #f8fafc; border-left: 4px solid #64748b; padding: 10px 15px; border-radius: 6px; font-style: italic; color: #475569; font-size: 0.95rem; text-align: center; margin-bottom: 20px;}
-    .card-planned { background-color: #f0f9ff; padding: 15px; border-radius: 10px; border-left: 5px solid #0ea5e9; margin-bottom: 15px;}
-    .card-actual { background-color: #f0fdf4; padding: 15px; border-radius: 10px; margin-bottom: 15px;}
-    .card-title { font-size: 0.95rem; font-weight: 700; margin-bottom: 8px; color: #475569; text-transform: uppercase;}
-    .workout-text { font-size: 1.05rem; margin:0; font-weight: 600; color: #0f172a;}
-    .badge-ok { color: #16a34a; font-weight: 700; }
-    .badge-warn { color: #ca8a04; font-weight: 700; }
-    .badge-bad { color: #dc2626; font-weight: 700; }
-    hr.garmin-divider { margin: 10px 0; border: 0; border-top: 1px solid #bbf7d0; }
-    [data-testid="stDataFrame"] { width: 100%; }
+    @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;500;600&display=swap');
+
+    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
+    .block-container {{ padding: 1.5rem 1rem !important; max-width: 100%; overflow-x: hidden; }}
+    .home-logo {{ text-align: center; font-size: 45px; margin-bottom: -15px; }}
+    .main-title {{ text-align: center; font-family: 'Oswald', sans-serif; font-weight: 700; letter-spacing: 1px;
+                   color: {COLORE_ASFALTO}; font-size: 1.9rem; margin-bottom: 5px; line-height: 1.2; text-transform: uppercase;}}
+    .motivation-box {{ background-color: #f8fafc; border-left: 4px solid {COLORE_ASFALTO}; padding: 10px 15px; border-radius: 6px;
+                       font-style: italic; color: #475569; font-size: 0.95rem; text-align: center; margin-bottom: 20px;}}
+    .card-planned {{ background-color: #f0f9ff; padding: 15px; border-radius: 10px; border-left: 5px solid {COLORE_CIELO}; margin-bottom: 15px;}}
+    .card-actual {{ background-color: #fff7ed; padding: 15px; border-radius: 10px; margin-bottom: 15px;}}
+    .card-title {{ font-size: 0.95rem; font-weight: 700; margin-bottom: 8px; color: #475569; text-transform: uppercase;}}
+    .workout-text {{ font-size: 1.05rem; margin:0; font-weight: 600; color: #0f172a;}}
+    hr.garmin-divider {{ margin: 10px 0; border: 0; border-top: 1px solid #fed7aa; }}
+    [data-testid="stDataFrame"] {{ width: 100%; }}
+
+    .stat-number {{ font-family: 'Oswald', sans-serif; font-weight: 700; font-size: 1.9rem; color: {COLORE_ASFALTO}; line-height: 1;}}
+    .stat-label {{ font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b; margin-top: 2px;}}
+
+    .badge-pill {{ display: inline-block; background-color: {COLORE_TRAGUARDO}; color: white; padding: 4px 12px;
+                   border-radius: 999px; font-size: 0.8rem; font-weight: 600; margin: 3px 5px 3px 0;}}
+
+    .progress-caption {{ font-size: 0.8rem; color: #78350f; margin-top: 8px; margin-bottom: 2px; }}
+    .progress-track {{ background-color: {COLORE_NEBBIA}; border-radius: 999px; height: 10px; overflow: hidden; }}
+    .progress-fill {{ height: 100%; border-radius: 999px; background-color: {COLORE_PISTA}; }}
+    .progress-fill.completo {{ background-color: {COLORE_TRAGUARDO}; }}
+
+    .heatmap-weekdays {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 12px; }}
+    .heatmap-weekday {{ font-size: 0.65rem; text-align: center; color: #94a3b8; text-transform: uppercase; }}
+    .heatmap-grid {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 4px; }}
+    .heatmap-cell {{ aspect-ratio: 1; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+                     font-size: 0.7rem; color: {COLORE_ASFALTO}; }}
+    .heatmap-cell.oggi {{ outline: 2px solid {COLORE_ASFALTO}; outline-offset: -2px; font-weight: 700; }}
+    .heatmap-cell.vuota {{ visibility: hidden; }}
     </style>
 """, unsafe_allow_html=True)
 
@@ -45,6 +78,7 @@ MESI_COMPLETI = {1: 'gennaio', 2: 'febbraio', 3: 'marzo', 4: 'aprile', 5: 'maggi
                  7: 'luglio', 8: 'agosto', 9: 'settembre', 10: 'ottobre', 11: 'novembre', 12: 'dicembre'}
 MESI_IT = {1: 'gen', 2: 'feb', 3: 'mar', 4: 'apr', 5: 'mag', 6: 'giu', 7: 'lug', 8: 'ago',
            9: 'set', 10: 'ott', 11: 'nov', 12: 'dic'}
+GIORNI_SETTIMANA_IT = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"]
 
 REGEX_KM = re.compile(r'(\d+(?:[.,]\d+)?)\s*km', re.IGNORECASE)
 
@@ -61,17 +95,31 @@ def get_garmin_client(email: str, password: str):
 
 
 @st.cache_data(ttl=60 * 10)
-def sincronizza_garmin_settimana(_client, email_key: str, giorni: int = 7):
-    """Recupera le attività dell'ultima settimana. _client non viene hashato da streamlit (prefisso _)."""
+def sincronizza_garmin_periodo(_client, email_key: str, giorni: int = 35):
+    """Recupera le attività degli ultimi N giorni (default 35, copre mese + streak + settimana).
+    _client non viene hashato da streamlit (prefisso _)."""
     fine = datetime.today().date()
     inizio = fine - timedelta(days=giorni - 1)
     try:
         attivita = _client.get_activities_by_date(inizio.isoformat(), fine.isoformat())
     except AttributeError:
         # fallback per versioni di garminconnect senza questo metodo
-        attivita = _client.get_activities(0, 25)
+        attivita = _client.get_activities(0, 60)
         attivita = [a for a in attivita if inizio.isoformat() <= a.get('startTimeLocal', '')[:10] <= fine.isoformat()]
     return attivita
+
+
+@st.cache_data(ttl=60 * 30)
+def ottieni_percorso_gps(_client, activity_id):
+    """Prova a recuperare la polilinea GPS di un'attività. Ritorna None se non disponibile
+    (dipende dalla versione della libreria garminconnect e dal tipo di attività)."""
+    try:
+        dettagli = _client.get_activity_details(activity_id)
+        punti = dettagli.get("geoPolylineDTO", {}).get("polyline", [])
+        coords = [(p["lat"], p["lon"]) for p in punti if "lat" in p and "lon" in p]
+        return coords if coords else None
+    except Exception:
+        return None
 
 
 def formatta_passo(velocita_ms: float) -> str:
@@ -95,6 +143,34 @@ def raggruppa_per_giorno(attivita: list) -> dict:
         per_giorno[data_iso]["km"] += km
         per_giorno[data_iso]["attivita"].append(act)
     return per_giorno
+
+
+def calcola_streak(attivita_per_giorno: dict, oggi: datetime) -> int:
+    """Conta i giorni consecutivi con almeno un'attività, partendo da oggi a ritroso."""
+    streak = 0
+    giorno = oggi.date()
+    while True:
+        info = attivita_per_giorno.get(giorno.isoformat())
+        if info and info["km"] > 0:
+            streak += 1
+            giorno -= timedelta(days=1)
+        else:
+            break
+    return streak
+
+
+def statistiche_mese(attivita: list, oggi: datetime) -> dict:
+    """Km totali, record distanza singola e miglior passo nel mese corrente."""
+    km_totali, record_distanza, record_velocita = 0.0, 0.0, 0.0
+    for act in attivita:
+        data_iso = act.get('startTimeLocal', '')[:10]
+        if not data_iso or not data_iso.startswith(oggi.strftime("%Y-%m")):
+            continue
+        km = act.get('distance', 0) / 1000
+        km_totali += km
+        record_distanza = max(record_distanza, km)
+        record_velocita = max(record_velocita, act.get('averageSpeed', 0) or 0)
+    return {"km_totali": km_totali, "record_distanza": record_distanza, "record_passo": formatta_passo(record_velocita)}
 
 
 # ---------------------------------------------------------------------------
@@ -181,10 +257,6 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int):
     return mese_data, allenamento_oggi, non_riconosciute
 
 
-# ---------------------------------------------------------------------------
-# CONFRONTO PIANIFICATO VS SVOLTO
-# ---------------------------------------------------------------------------
-
 def estrai_km_pianificati(testo: str):
     if not testo:
         return None
@@ -194,22 +266,38 @@ def estrai_km_pianificati(testo: str):
     return None
 
 
-def valuta_aderenza(km_piano, km_svolto):
-    """Ritorna (classe_css, emoji, messaggio)."""
-    if km_piano is None and km_svolto is None:
-        return "", "", None
-    if km_piano is None:
-        return "badge-warn", "🟡", f"Corsi {km_svolto:.1f} km (nessun target riconosciuto nel piano)"
-    if km_svolto is None or km_svolto == 0:
-        return "badge-bad", "🔴", f"Piano: {km_piano:.1f} km — nessuna attività registrata"
+# ---------------------------------------------------------------------------
+# HEATMAP MENSILE (stile "contribution calendar")
+# ---------------------------------------------------------------------------
 
-    diff_pct = abs(km_svolto - km_piano) / km_piano if km_piano else 1
-    if diff_pct <= 0.10:
-        return "badge-ok", "🟢", f"In linea col piano ({km_svolto:.1f} km vs {km_piano:.1f} km)"
-    elif diff_pct <= 0.25:
-        return "badge-warn", "🟡", f"Leggero scostamento ({km_svolto:.1f} km vs {km_piano:.1f} km)"
-    else:
-        return "badge-bad", "🔴", f"Scostamento marcato ({km_svolto:.1f} km vs {km_piano:.1f} km)"
+def colore_heatmap(km: float) -> str:
+    if km <= 0:
+        return COLORE_NEBBIA
+    if km < 5:
+        return COLORE_PISTA_CHIARO
+    if km < 10:
+        return "#fb923c"
+    return COLORE_PISTA
+
+
+def costruisci_heatmap_html(oggi: datetime, attivita_per_giorno: dict) -> str:
+    primo_weekday, giorni_nel_mese = calendar.monthrange(oggi.year, oggi.month)  # weekday: lunedì=0
+    celle = ['<div class="heatmap-cell vuota"></div>' for _ in range(primo_weekday)]
+
+    for giorno_num in range(1, giorni_nel_mese + 1):
+        data = datetime(oggi.year, oggi.month, giorno_num)
+        data_iso = data.strftime("%Y-%m-%d")
+        km = attivita_per_giorno.get(data_iso, {}).get("km", 0.0)
+        colore = colore_heatmap(km) if data.date() <= oggi.date() else "white"
+        bordo = "border: 1px dashed #e2e8f0;" if data.date() > oggi.date() else ""
+        classe_oggi = " oggi" if data.date() == oggi.date() else ""
+        titolo = f"{giorno_num} {MESI_IT[oggi.month]}: {km:.1f} km" if data.date() <= oggi.date() else ""
+        celle.append(
+            f'<div class="heatmap-cell{classe_oggi}" style="background-color:{colore};{bordo}" title="{titolo}">{giorno_num}</div>'
+        )
+
+    intestazioni = "".join(f'<div class="heatmap-weekday">{g}</div>' for g in GIORNI_SETTIMANA_IT)
+    return f'<div class="heatmap-weekdays">{intestazioni}</div><div class="heatmap-grid">{"".join(celle)}</div>'
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +331,10 @@ if uploaded_file is not None:
 file_da_leggere = EXCEL_FILE_PATH if os.path.exists(EXCEL_FILE_PATH) else None
 
 # ---------------------------------------------------------------------------
-# GARMIN: sincronizzazione settimanale (usata sia per oggi che per il grafico)
+# GARMIN: sincronizzazione (35 giorni: copre mese corrente, streak e settimana)
 # ---------------------------------------------------------------------------
 
+attivita_periodo = []
 attivita_per_giorno = {}
 garmin_client = None
 garmin_errore = None
@@ -253,8 +342,8 @@ garmin_errore = None
 if GARMIN_EMAIL and GARMIN_PWD:
     try:
         garmin_client = get_garmin_client(GARMIN_EMAIL, GARMIN_PWD)
-        attivita_settimana = sincronizza_garmin_settimana(garmin_client, GARMIN_EMAIL)
-        attivita_per_giorno = raggruppa_per_giorno(attivita_settimana)
+        attivita_periodo = sincronizza_garmin_periodo(garmin_client, GARMIN_EMAIL)
+        attivita_per_giorno = raggruppa_per_giorno(attivita_periodo)
     except GarminConnectAuthenticationError:
         garmin_errore = "auth"
     except Exception:
@@ -297,7 +386,9 @@ if file_da_leggere:
 
         # --- ALLENAMENTO SVOLTO (solo Garmin) ---
         st.markdown("<div class='card-actual'>", unsafe_allow_html=True)
-        st.markdown("<div class='card-title'>🟢 Allenamento Svolto</div>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>🟠 Allenamento Svolto</div>", unsafe_allow_html=True)
+
+        km_svolto_oggi = 0.0
 
         if garmin_errore == "auth":
             st.error("❌ Credenziali Garmin non valide. Controlla email e password in secrets.toml.")
@@ -309,6 +400,7 @@ if file_da_leggere:
         else:
             dati_oggi = attivita_per_giorno.get(oggi_iso)
             if dati_oggi and dati_oggi["attivita"]:
+                km_svolto_oggi = dati_oggi["km"]
                 for i, act in enumerate(dati_oggi["attivita"]):
                     distanza = round(act.get("distance", 0) / 1000, 2)
                     durata_min = round(act.get("duration", 0) / 60, 1)
@@ -320,6 +412,20 @@ if file_da_leggere:
                         f"📏 {distanza} km &nbsp;|&nbsp; ⏱️ {durata_min} min &nbsp;|&nbsp; ⚡ {passo_str}/km</p>",
                         unsafe_allow_html=True,
                     )
+
+                    # Mini mappa del percorso (se Garmin espone la polilinea GPS)
+                    percorso = ottieni_percorso_gps(garmin_client, act.get("activityId"))
+                    if percorso:
+                        df_percorso = pd.DataFrame(percorso, columns=["lat", "lon"])
+                        mappa = (
+                            alt.Chart(df_percorso)
+                            .mark_line(color=COLORE_PISTA, strokeWidth=3)
+                            .encode(x=alt.X("lon:Q", axis=None, scale=alt.Scale(zero=False)),
+                                    y=alt.Y("lat:Q", axis=None, scale=alt.Scale(zero=False)))
+                            .properties(height=140)
+                            .configure_view(strokeWidth=0)
+                        )
+                        st.altair_chart(mappa, use_container_width=True)
             else:
                 st.markdown(
                     "<p class='workout-text'>Nessuna attività registrata oggi su Garmin.</p>",
@@ -327,17 +433,65 @@ if file_da_leggere:
                 )
 
             with st.expander("🗓️ Attività dell'ultima settimana"):
-                if attivita_per_giorno:
-                    for data_iso in sorted(attivita_per_giorno.keys(), reverse=True):
-                        info = attivita_per_giorno[data_iso]
+                giorni_settimana_iso = {(oggi - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)}
+                trovate = False
+                for data_iso in sorted(giorni_settimana_iso, reverse=True):
+                    info = attivita_per_giorno.get(data_iso)
+                    if info:
+                        trovate = True
                         st.markdown(f"**{data_iso}** — {info['km']:.1f} km totali ({len(info['attivita'])} attività)")
-                else:
+                if not trovate:
                     st.caption("Nessuna attività trovata nell'ultima settimana.")
+
+        # Barra di progresso: km svolti oggi rispetto al piano (senza etichette tipo "target")
+        km_piano_oggi = estrai_km_pianificati(allenamento_oggi)
+        if km_piano_oggi and km_piano_oggi > 0:
+            percentuale = min(100, round((km_svolto_oggi / km_piano_oggi) * 100))
+            classe_fill = "completo" if percentuale >= 100 else ""
+            st.markdown(f"<p class='progress-caption'>{km_svolto_oggi:.1f} / {km_piano_oggi:.1f} km di oggi</p>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='progress-track'><div class='progress-fill {classe_fill}' style='width:{percentuale}%;'></div></div>",
+                unsafe_allow_html=True,
+            )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
         if totale_non_riconosciute > 0:
             st.caption(f"ℹ️ {totale_non_riconosciute} celle data non riconosciute nell'Excel (ignorate nel parsing).")
+
+        st.markdown("---")
+
+        # --- STATISTICHE DEL MESE + STREAK + BADGE ---
+        stats = statistiche_mese(attivita_periodo, oggi)
+        streak = calcola_streak(attivita_per_giorno, oggi)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"<div class='stat-number'>{stats['km_totali']:.0f}</div><div class='stat-label'>Km questo mese</div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"<div class='stat-number'>{streak}</div><div class='stat-label'>Giorni di fila</div>", unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div class='stat-number'>{stats['record_distanza']:.1f}</div><div class='stat-label'>Km più lunghi</div>", unsafe_allow_html=True)
+
+        badge = []
+        if stats["km_totali"] >= 100:
+            badge.append("🏅 100 km questo mese")
+        if streak >= 5:
+            badge.append(f"🔥 {streak} allenamenti di fila")
+        if stats["record_distanza"] >= 15:
+            badge.append(f"🏆 Lunga distanza: {stats['record_distanza']:.1f} km")
+
+        if badge:
+            st.markdown(
+                "".join(f"<span class='badge-pill'>{b}</span>" for b in badge),
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("---")
+
+        # --- HEATMAP MENSILE ---
+        st.subheader("🔥 Calendario del mese")
+        st.markdown(costruisci_heatmap_html(oggi, attivita_per_giorno), unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -360,9 +514,25 @@ if file_da_leggere:
 
             righe_grafico.append({"Giorno": giorno.strftime("%d/%m"), "Pianificato": km_piano, "Svolto": km_svolto})
 
-        df_grafico = pd.DataFrame(righe_grafico).set_index("Giorno")
+        df_grafico = pd.DataFrame(righe_grafico)
         if df_grafico[["Pianificato", "Svolto"]].sum().sum() > 0:
-            st.bar_chart(df_grafico)
+            df_lungo = df_grafico.melt(id_vars="Giorno", var_name="Tipo", value_name="Km")
+            grafico = (
+                alt.Chart(df_lungo)
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                .encode(
+                    x=alt.X("Giorno:N", sort=None, title=None),
+                    xOffset=alt.XOffset("Tipo:N"),
+                    y=alt.Y("Km:Q", title="Km"),
+                    color=alt.Color(
+                        "Tipo:N",
+                        scale=alt.Scale(domain=["Pianificato", "Svolto"], range=[COLORE_CIELO, COLORE_PISTA]),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(grafico, use_container_width=True)
         else:
             st.caption("Non ci sono ancora abbastanza dati (piano o Garmin) per mostrare il grafico.")
 
@@ -377,7 +547,7 @@ if file_da_leggere:
 
             def evidenzia_oggi(row):
                 if row["Data"] == etichetta_oggi:
-                    return ["background-color: #bbf7d0; font-weight: 700;"] * len(row)
+                    return ["background-color: #fed7aa; font-weight: 700;"] * len(row)
                 return [""] * len(row)
 
             tabella_stilizzata = tabella_storico.style.apply(evidenzia_oggi, axis=1)
