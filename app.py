@@ -18,7 +18,7 @@ COLORE_PISTA_CHIARO = "#fed7aa"
 COLORE_CIELO = "#0ea5e9"      
 COLORE_TRAGUARDO = "#16a34a"  
 COLORE_NEBBIA = "#f1f5f9"     
-COLORE_SIDEBAR = "#0f172a"
+COLORE_SIDEBAR = "#f8fafc"    # Colore chiaro per la barra laterale
 
 st.markdown(f"""
     <style>
@@ -27,9 +27,10 @@ st.markdown(f"""
     html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
     .block-container {{ padding: 1.5rem 1rem !important; max-width: 100%; overflow-x: hidden; }}
     
-    [data-testid="stSidebar"] {{ background-color: {COLORE_SIDEBAR}; }}
-    [data-testid="stSidebar"] * {{ color: #f8fafc !important; }}
-    [data-testid="stSidebar"] hr {{ border-color: #334155; margin: 20px 0; }}
+    /* MENU LATERALE CHIARO */
+    [data-testid="stSidebar"] {{ background-color: {COLORE_SIDEBAR}; border-right: 1px solid #e2e8f0; }}
+    [data-testid="stSidebar"] * {{ color: {COLORE_ASFALTO} !important; }}
+    [data-testid="stSidebar"] hr {{ border-color: #cbd5e1; margin: 20px 0; }}
     
     .home-logo {{ text-align: center; font-size: 45px; margin-bottom: -15px; }}
     .main-title {{ text-align: center; font-family: 'Oswald', sans-serif; font-weight: 700; letter-spacing: 1px;
@@ -109,6 +110,8 @@ def sincronizza_garmin_periodo(_client, email_key: str, giorni: int = 35):
 
 def push_allenamenti_su_garmin(client, allenamenti_futuri):
     successi = 0
+    errori = []
+    
     for data_iso, desc in allenamenti_futuri.items():
         if not desc or str(desc).strip().lower() == "riposo":
             continue
@@ -129,13 +132,31 @@ def push_allenamenti_su_garmin(client, allenamenti_futuri):
                     }]
                 }]
             }
-            workout_id = client.add_workout(workout).get("workoutId")
+            
+            workout_id = None
+            
+            if hasattr(client, 'add_workout'):
+                res = client.add_workout(workout)
+                workout_id = res.get("workoutId")
+            elif hasattr(client, 'garth'):
+                res = client.garth.client.post("garminconnect", "/workout-service/workout", json=workout).json()
+                workout_id = res.get("workoutId")
+            else:
+                errori.append("Libreria di sistema non compatibile con l'upload.")
+                break
+
             if workout_id:
-                client.schedule_workout(workout_id, data_iso)
+                payload_date = {"date": data_iso}
+                if hasattr(client, 'schedule_workout'):
+                    client.schedule_workout(workout_id, data_iso)
+                elif hasattr(client, 'garth'):
+                    client.garth.client.post("garminconnect", f"/workout-service/schedule/{workout_id}", json=payload_date)
                 successi += 1
+                
         except Exception as e:
-            pass 
-    return successi
+            errori.append(f"Errore su {data_iso}: {str(e)}")
+            
+    return successi, errori
 
 def formatta_passo(velocita_ms: float) -> str:
     if not velocita_ms or velocita_ms <= 0:
@@ -180,7 +201,7 @@ def statistiche_mese(attivita: list, oggi: datetime) -> dict:
     return {"km_totali": km_totali, "record_distanza": record_distanza, "record_passo": formatta_passo(record_velocita)}
 
 # ---------------------------------------------------------------------------
-# EXCEL: PARSING PRECISO CON RICONOSCIMENTO MESE
+# EXCEL: PARSING PRECISO
 # ---------------------------------------------------------------------------
 
 @st.cache_data(ttl=60 * 5)
@@ -211,7 +232,6 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int, 
     non_riconosciute = 0
     pianificazione_futura = {}
 
-    # Riconosce il mese specifico del foglio Excel corrente
     mese_foglio = mese_oggi
     for num, nome in MESI_COMPLETI.items():
         if nome in nome_foglio.lower():
@@ -246,7 +266,6 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int, 
             d_str = str(d_raw).strip()
             d_lower = d_str.lower()
             
-            # Cerca il mese esatto di questa cella
             mese_cella = mese_foglio
             for num, sigla in MESI_IT.items():
                 if sigla in d_lower or f"/{num}/" in d_lower:
@@ -269,7 +288,6 @@ def estrai_workout_del_mese(df: pd.DataFrame, mese_oggi: int, giorno_oggi: int, 
             allenamento_desc = w if w != "nan" else "Riposo"
             mese_data.append({"Data": d_str.capitalize(), "Programma": allenamento_desc})
             
-            # REGOLE DI SINCRONIZZAZIONE GARMIN: RIGOROSAMENTE DA OGGI IN POI (>=)
             if data_reale and data_reale.date() >= datetime.today().date() and data_reale.date() <= (datetime.today().date() + timedelta(days=14)):
                 pianificazione_futura[data_reale.strftime("%Y-%m-%d")] = allenamento_desc
 
@@ -378,16 +396,23 @@ if file_da_leggere:
             totale_non_riconosciute += non_ric
             piani_futuri.update(futuri)
 
-        # SEZIONE SIDEBAR: Sincronizzazione Piani Futuri (Solo DA OGGI in poi)
+        # SEZIONE SIDEBAR: Sincronizzazione Piani Futuri
         st.sidebar.markdown("---")
         st.sidebar.markdown("### 2. Sincronizzazione Calendario")
         if garmin_client and piani_futuri:
+            st.sidebar.caption(f"Trovati **{len(piani_futuri)} allenamenti programmati** (da oggi alle prossime 2 settimane).")
+            
             if st.sidebar.button("Invia prossime 2 settimane al Garmin"):
-                with st.spinner("Invio allenamenti al calendario (Da Oggi in poi)..."):
-                    caricati = push_allenamenti_su_garmin(garmin_client, piani_futuri)
-                st.sidebar.success(f"{caricati} allenamenti caricati su Garmin Connect!")
+                with st.spinner("Invio in corso. Attendi..."):
+                    caricati, errori = push_allenamenti_su_garmin(garmin_client, piani_futuri)
+                if caricati > 0:
+                    st.sidebar.success(f"{caricati} allenamenti caricati su Garmin Connect!")
+                if errori:
+                    st.sidebar.error(f"Errore caricamento. Dettagli sistema: {errori[0]}")
         elif not garmin_client:
             st.sidebar.caption("Garmin disconnesso, sincronizzazione disabilitata.")
+        else:
+            st.sidebar.caption("Nessun allenamento futuro trovato. Controlla il foglio Excel o le date.")
 
         # --- ALLENAMENTO PROGRAMMATO ---
         st.subheader(f"⚡ Oggi ({oggi.strftime('%d/%m/%Y')})")
